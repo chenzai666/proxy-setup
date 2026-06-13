@@ -1,20 +1,31 @@
 ### 下载 ZIP
 
-PowerShell 执行以下命令下载并解压：
+**Windows (PowerShell):**
 
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip" -OutFile "$env:USERPROFILE\Downloads\proxy-setup.zip"
 Expand-Archive -Path "$env:USERPROFILE\Downloads\proxy-setup.zip" -DestinationPath "$env:USERPROFILE\Downloads\proxy-setup" -Force
-```
-
-进入目录并运行：
-
-```powershell
 cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-master"
 .\install_python.bat
 ```
 
-> 自动检测 Python，无则安装；装完后自动搜索并运行 `setup_proxy.py`。
+**Mac / Linux (curl):**
+
+```bash
+curl -L -o ~/Downloads/proxy-setup.zip "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip"
+unzip ~/Downloads/proxy-setup.zip -d ~/Downloads/proxy-setup
+cd ~/Downloads/proxy-setup/proxy-setup-master
+bash setup_proxy.sh
+```
+
+**Mac / Linux (wget):**
+
+```bash
+wget -O ~/Downloads/proxy-setup.zip "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip"
+unzip ~/Downloads/proxy-setup.zip -d ~/Downloads/proxy-setup
+cd ~/Downloads/proxy-setup/proxy-setup-master
+bash setup_proxy.sh
+```
 
 ---
 
@@ -28,7 +39,7 @@ bash setup_proxy.sh
 
 ---
 
-### 纯 PowerShell（无需 Python）
+### 纯 PowerShell（无需 Python，Windows）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
@@ -36,7 +47,7 @@ powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
 
 ---
 
-### Mac / Linux
+### 纯 bash（无需 Python，Mac / Linux）
 
 ```bash
 bash setup_proxy.sh
@@ -48,4 +59,4 @@ bash setup_proxy.sh
 bash install_python.sh
 ```
 
-> `install_python.sh` 自动适配 Homebrew（含中科大/清华国内镜像）、apt、yum、dnf、pacman。
+> `install_python.sh` 自动适配 Homebrew（含中科大/清华国内镜像）、apt、yum、dnf、pacman。安装后自动检测并运行 `setup_proxy.py`。

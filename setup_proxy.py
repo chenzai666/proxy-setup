@@ -768,7 +768,7 @@ def main():
         warn(f"未测试的平台: {platform.system()}，部分功能可能不可用")
 
     rc_file = get_rc_file()
-    info(f"配置文件: {rc_file}")
+    info(f"代理配置将写入: {rc_file}")
 
     while True:
         print_menu()

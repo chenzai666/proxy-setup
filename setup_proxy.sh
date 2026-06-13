@@ -439,7 +439,7 @@ main() {
     local rc="$HOME/.zshrc"
     [[ -n "${BASH_VERSION:-}" ]] && rc="$HOME/.bashrc"
     [[ -f "$HOME/.bash_profile" ]] && [[ -z "${ZSH_VERSION:-}" ]] && rc="$HOME/.bash_profile"
-    info "配置文件: $rc"
+    info "代理配置将写入: $rc"
 
     while true; do
         print_menu

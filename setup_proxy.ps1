@@ -478,7 +478,7 @@ function Show-Menu {
 
 function Main {
     $rc = Get-ProfilePath
-    info "配置文件: $rc"
+    info "代理配置将写入: $rc"
 
     while ($true) {
         Show-Menu

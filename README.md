@@ -53,6 +53,11 @@ cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-master"
 
 ```bash
 git clone https://github.com/chenzai666/proxy-setup.git
+```
+
+克隆完成后进入目录：
+
+```bash
 cd proxy-setup
 ```
 

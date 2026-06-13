@@ -3,7 +3,7 @@ cd /d "%~dp0"
 
 echo.
 echo   ========================================
-echo     Python 3 Installer for Windows
+echo     Python 3 + Proxy Setup for Windows
 echo   ========================================
 echo.
 echo   Script dir: %~dp0
@@ -16,9 +16,11 @@ if not errorlevel 1 (
     echo.
     echo   [OK] Python is ready!
     echo   --------------------------------
-    echo   Run:   python setup_proxy.py
-    echo   Or:    powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
-    echo   --------------------------------
+    echo.
+    set /p RUN="   Run proxy setup now? [Y/n] "
+    if /i not "%RUN%"=="n" (
+        python "%~dp0setup_proxy.py"
+    )
     goto end
 )
 
@@ -28,8 +30,11 @@ if not errorlevel 1 (
     echo.
     echo   [OK] Python is ready!
     echo   --------------------------------
-    echo   Run:   python3 setup_proxy.py
-    echo   --------------------------------
+    echo.
+    set /p RUN="   Run proxy setup now? [Y/n] "
+    if /i not "%RUN%"=="n" (
+        python3 "%~dp0setup_proxy.py"
+    )
     goto end
 )
 
@@ -47,7 +52,27 @@ if errorlevel 1 (
     goto end
 )
 echo   [OK] Installed!
-echo   Close and re-open terminal, then run: python setup_proxy.py
+echo.
+echo   Refreshing PATH...
+REM 刷新 PATH（从系统注册表重新读取）
+for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "UPath=%%b"
+for /f "tokens=2*" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SPath=%%b"
+set "PATH=%UPath%;%SPath%"
+REM 把 Python 安装目录塞进当前 PATH（典型路径）
+set "PATH=%LOCALAPPDATA%\Programs\Python\Python313;%LOCALAPPDATA%\Programs\Python\Python313\Scripts;%PATH%"
+set "PATH=C:\Python313;C:\Python313\Scripts;%PATH%"
+
+python --version >nul 2>&1
+if not errorlevel 1 (
+    echo   [OK] Python ready after install!
+    echo.
+    python "%~dp0setup_proxy.py"
+    goto end
+)
+
+echo   Python installed but not in PATH yet.
+echo   Please close this window and re-open terminal, then run:
+echo       python "%~dp0setup_proxy.py"
 goto end
 
 :no_winget

@@ -444,6 +444,12 @@ def remove_proxy(rc_file: Path):
     """清除代理配置块"""
     is_ps = IS_WINDOWS or rc_file.suffix in (".ps1",)
 
+    # 清除当前进程环境变量
+    for k in ["http_proxy", "https_proxy", "all_proxy",
+              "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+              "no_proxy", "NO_PROXY", "ANTHROPIC_BASE_URL"]:
+        os.environ.pop(k, None)
+
     if rc_file.exists():
         content = rc_file.read_text(encoding="utf-8")
         pattern = re.compile(

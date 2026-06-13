@@ -33,6 +33,11 @@
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip" -OutFile "$env:USERPROFILE\Downloads\proxy-setup.zip"
 Expand-Archive -Path "$env:USERPROFILE\Downloads\proxy-setup.zip" -DestinationPath "$env:USERPROFILE\Downloads\proxy-setup" -Force
+```
+
+下载完成后进入目录：
+
+```powershell
 cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-master"
 ```
 

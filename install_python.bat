@@ -2,88 +2,69 @@
 cd /d "%~dp0"
 
 echo.
-echo   ========================================
-echo     Python 3 + Proxy Setup for Windows
-echo   ========================================
+echo ==========
+echo  Python 3 + Proxy Setup
+echo ==========
 echo.
-echo   Script dir: %~dp0
+echo  Script: %~dp0
 echo.
 
-REM --- Check if Python already installed ---
+REM Check python
 python --version >nul 2>&1
-if not errorlevel 1 (
-    python --version 2>&1
-    echo.
-    echo   [OK] Python is ready!
-    echo   --------------------------------
-    echo.
-    set /p RUN="   Run proxy setup now? [Y/n] "
-    if /i not "%RUN%"=="n" (
-        python "%~dp0setup_proxy.py"
-    )
-    goto end
-)
+if not errorlevel 1 goto RUN_SETUP
 
 python3 --version >nul 2>&1
-if not errorlevel 1 (
-    python3 --version 2>&1
-    echo.
-    echo   [OK] Python is ready!
-    echo   --------------------------------
-    echo.
-    set /p RUN="   Run proxy setup now? [Y/n] "
-    if /i not "%RUN%"=="n" (
-        python3 "%~dp0setup_proxy.py"
-    )
-    goto end
-)
+if not errorlevel 1 goto RUN_SETUP_PY3
 
-echo   [WARN] Python 3 not found.
+REM Not found - try install
+echo  Python not found. Installing via winget...
 echo.
-echo   Trying to install via winget...
 
 winget --version >nul 2>&1
-if errorlevel 1 goto no_winget
+if errorlevel 1 goto NO_WINGET
 
-echo   Downloading Python 3.13...
-winget install Python.Python.3.13 --accept-package-agreements --accept-source-agreements --silent
+winget install Python.Python.3.13 --accept-package-agreements --accept-source-agreements
 if errorlevel 1 (
-    echo   [ERR] winget install failed.
-    goto end
-)
-echo   [OK] Installed!
-echo.
-echo   Refreshing PATH...
-REM 刷新 PATH（从系统注册表重新读取）
-for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "UPath=%%b"
-for /f "tokens=2*" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SPath=%%b"
-set "PATH=%UPath%;%SPath%"
-REM 把 Python 安装目录塞进当前 PATH（典型路径）
-set "PATH=%LOCALAPPDATA%\Programs\Python\Python313;%LOCALAPPDATA%\Programs\Python\Python313\Scripts;%PATH%"
-set "PATH=C:\Python313;C:\Python313\Scripts;%PATH%"
-
-python --version >nul 2>&1
-if not errorlevel 1 (
-    echo   [OK] Python ready after install!
     echo.
-    python "%~dp0setup_proxy.py"
-    goto end
+    echo  [ERR] Install failed.
+    goto MANUAL
 )
 
-echo   Python installed but not in PATH yet.
-echo   Please close this window and re-open terminal, then run:
-echo       python "%~dp0setup_proxy.py"
-goto end
-
-:no_winget
-echo   Winget not available.
-echo   Opening Python download page...
-start "" https://www.python.org/downloads/
 echo.
-echo   After install (check "Add Python to PATH!"), run:
-echo       python "%~dp0setup_proxy.py"
+echo  [OK] Python installed!
+echo  Please RE-OPEN terminal and run this bat again.
+goto DONE
 
-:end
+:NO_WINGET
+echo  winget not found.
+goto MANUAL
+
+:MANUAL
 echo.
-echo   Press any key to exit...
-pause >nul
+echo  Please install Python manually:
+echo  https://www.python.org/downloads/
+echo  (Check "Add Python to PATH" box!)
+goto DONE
+
+:RUN_SETUP
+python --version
+echo.
+echo  Python OK. Starting proxy setup...
+echo.
+timeout /t 2 >nul
+python "%~dp0setup_proxy.py"
+goto DONE
+
+:RUN_SETUP_PY3
+python3 --version
+echo.
+echo  Python OK. Starting proxy setup...
+echo.
+timeout /t 2 >nul
+python3 "%~dp0setup_proxy.py"
+goto DONE
+
+:DONE
+echo.
+echo  Press any key to close...
+pause

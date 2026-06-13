@@ -19,16 +19,16 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 
 **Windows (PowerShell):**
 
+推荐方式（下载到临时文件，无缓存/编码问题）：
+
 ```powershell
-$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;$w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@2671410/setup_proxy.ps1')|iex
+curl.exe -sL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1 -o $env:TEMP\sp.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\sp.ps1; Remove-Item $env:TEMP\sp.ps1
 ```
 
-> 如果执行策略受限：
+> 如果不通，用代理镜像地址：
 > ```powershell
-> powershell -ExecutionPolicy Bypass -Command "$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;$w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@2671410/setup_proxy.ps1')|iex"
+> $u='https://ghproxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1';curl.exe -sL $u -o $env:TEMP\sp.ps1; powershell -ep bypass -f $env:TEMP\sp.ps1; ri $env:TEMP\sp.ps1
 > ```
->
-> 注：URL 中含 commit hash `@2671410` 锁定版本，避免 CDN 缓存旧文件。
 
 ---
 

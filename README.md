@@ -13,8 +13,8 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 ```
 
 ```bash
-# 或 Python 版
-curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.py | python3
+# 或 Python 版（需先下载，管道执行会因 input() 报错）
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.py -o /tmp/sp.py && python3 /tmp/sp.py && rm /tmp/sp.py
 ```
 
 **Windows (PowerShell):**

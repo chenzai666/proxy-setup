@@ -9,6 +9,9 @@ echo.
 echo  Script: %~dp0
 echo.
 
+REM Check if setup_proxy files exist
+if not exist "%~dp0setup_proxy.py" if not exist "%~dp0setup_proxy.ps1" goto MISSING_FILES
+
 REM Check python
 python --version >nul 2>&1
 if not errorlevel 1 goto RUN_SETUP
@@ -46,13 +49,26 @@ echo  https://www.python.org/downloads/
 echo  (Check "Add Python to PATH" box!)
 goto DONE
 
+:MISSING_FILES
+echo  [ERR] setup_proxy.py / setup_proxy.ps1 not found!
+echo.
+echo  Please download the FULL repo, not just this bat file:
+echo    https://github.com/chenzai666/proxy-setup
+echo.
+echo  git clone or Download ZIP  (green Code button)
+goto DONE
+
 :RUN_SETUP
 python --version
 echo.
 echo  Python OK. Starting proxy setup...
 echo.
 timeout /t 2 >nul
-python "%~dp0setup_proxy.py"
+if exist "%~dp0setup_proxy.py" (
+    python "%~dp0setup_proxy.py"
+) else (
+    powershell -ExecutionPolicy Bypass -File "%~dp0setup_proxy.ps1"
+)
 goto DONE
 
 :RUN_SETUP_PY3
@@ -61,7 +77,11 @@ echo.
 echo  Python OK. Starting proxy setup...
 echo.
 timeout /t 2 >nul
-python3 "%~dp0setup_proxy.py"
+if exist "%~dp0setup_proxy.py" (
+    python3 "%~dp0setup_proxy.py"
+) else (
+    powershell -ExecutionPolicy Bypass -File "%~dp0setup_proxy.ps1"
+)
 goto DONE
 
 :DONE

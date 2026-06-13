@@ -3,6 +3,7 @@
     Windows 终端代理一键配置（纯 PowerShell，无需 Python）
     支持 v2rayN / Clash / sing-box
     适用于 Codex CLI / Claude Code / npm / git
+    移除 BOM 以便 irm|iex 远程执行
 #>
 
 $DEFAULT_HTTP_PORT   = 7890

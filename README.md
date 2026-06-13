@@ -12,18 +12,20 @@ cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-master"
 **Mac / Linux (curl):**
 
 ```bash
-curl -L -o ~/Downloads/proxy-setup.zip "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip"
-unzip ~/Downloads/proxy-setup.zip -d ~/Downloads/proxy-setup
-cd ~/Downloads/proxy-setup/proxy-setup-master
+curl -L -o ~/Downloads/proxy-setup.tar.gz "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.tar.gz"
+mkdir -p ~/Downloads/proxy-setup
+tar -xzf ~/Downloads/proxy-setup.tar.gz -C ~/Downloads/proxy-setup --strip-components=1
+cd ~/Downloads/proxy-setup
 bash setup_proxy.sh
 ```
 
 **Mac / Linux (wget):**
 
 ```bash
-wget -O ~/Downloads/proxy-setup.zip "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip"
-unzip ~/Downloads/proxy-setup.zip -d ~/Downloads/proxy-setup
-cd ~/Downloads/proxy-setup/proxy-setup-master
+wget -O ~/Downloads/proxy-setup.tar.gz "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.tar.gz"
+mkdir -p ~/Downloads/proxy-setup
+tar -xzf ~/Downloads/proxy-setup.tar.gz -C ~/Downloads/proxy-setup --strip-components=1
+cd ~/Downloads/proxy-setup
 bash setup_proxy.sh
 ```
 

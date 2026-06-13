@@ -49,9 +49,9 @@ powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
 PowerShell 中执行：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/chenzai666/proxy-setup/archive/refs/heads/main.zip" -OutFile "$env:USERPROFILE\Downloads\proxy-setup.zip"
+Invoke-WebRequest -Uri "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip" -OutFile "$env:USERPROFILE\Downloads\proxy-setup.zip"
 Expand-Archive -Path "$env:USERPROFILE\Downloads\proxy-setup.zip" -DestinationPath "$env:USERPROFILE\Downloads\proxy-setup" -Force
-cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-main"
+cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-master"
 ```
 
 **方式二：Git Clone**

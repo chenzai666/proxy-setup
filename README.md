@@ -9,8 +9,10 @@ Windows / Mac / Linux 代理一键配置工具，自动检测 v2rayN / Clash / s
 **Mac / Linux:**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh | bash
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
 ```
+
+> 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
 
 ```bash
 # 或 Python 版（需先下载，管道执行会因 input() 报错）

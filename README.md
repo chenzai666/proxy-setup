@@ -20,15 +20,15 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 **Windows (PowerShell):**
 
 ```powershell
-irm https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1 | iex
+[Console]::OutputEncoding = [Text.Encoding]::UTF8; irm https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1 | iex
 ```
 
 > 如果执行策略受限：
 > ```powershell
-> powershell -ExecutionPolicy Bypass -Command "irm https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1 | iex"
+> powershell -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding=[Text.Encoding]::UTF8; irm https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1 | iex"
 > ```
 >
-> 注：使用 jsdelivr CDN 而非 GitHub Raw（GitHub 会缓存 UTF-8 BOM 导致解析失败）。
+> 注：使用 jsdelivr CDN 而非 GitHub Raw（GitHub 会缓存 UTF-8 BOM 导致解析失败），前置 `[Console]::OutputEncoding` 确保中文正常显示。
 
 ---
 

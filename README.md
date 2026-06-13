@@ -20,13 +20,15 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 **Windows (PowerShell):**
 
 ```powershell
-& ([ScriptBlock]::Create((irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1)))
+irm https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1 | iex
 ```
 
 > 如果执行策略受限：
 > ```powershell
-> powershell -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1)))"
+> powershell -ExecutionPolicy Bypass -Command "irm https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1 | iex"
 > ```
+>
+> 注：使用 jsdelivr CDN 而非 GitHub Raw（GitHub 会缓存 UTF-8 BOM 导致解析失败）。
 
 ---
 

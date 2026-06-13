@@ -148,31 +148,44 @@ find_and_run_setup() {
     local script_dir
     script_dir="$(cd "$(dirname "$0")" && pwd)"
 
-    local found=""
-    if [[ -f "$script_dir/setup_proxy.sh" ]]; then
-        found="$script_dir/setup_proxy.sh"
-    elif [[ -f "$script_dir/../setup_proxy.sh" ]]; then
-        found="$script_dir/../setup_proxy.sh"
-    elif [[ -f "$HOME/Downloads/setup_proxy.sh" ]]; then
-        found="$HOME/Downloads/setup_proxy.sh"
-    elif [[ -f "$HOME/Downloads/proxy-setup/setup_proxy.sh" ]]; then
-        found="$HOME/Downloads/proxy-setup/setup_proxy.sh"
-    elif [[ -f "$HOME/Downloads/proxy-setup-master/setup_proxy.sh" ]]; then
-        found="$HOME/Downloads/proxy-setup-master/setup_proxy.sh"
-    elif [[ -f "$HOME/Downloads/proxy-setup-main/setup_proxy.sh" ]]; then
-        found="$HOME/Downloads/proxy-setup-main/setup_proxy.sh"
-    fi
+    local found_py=""
+    local found_sh=""
+    local search_dirs=(
+        "$script_dir"
+        "$script_dir/.."
+        "$HOME/Downloads"
+        "$HOME/Downloads/proxy-setup"
+        "$HOME/Downloads/proxy-setup-master"
+        "$HOME/Downloads/proxy-setup-main"
+    )
 
-    if [[ -n "$found" ]]; then
-        ok "找到: $found"
-        printf '  是否运行代理配置脚本？[Y/n] '
+    for dir in "${search_dirs[@]}"; do
+        if [[ -z "$found_py" && -f "$dir/setup_proxy.py" ]]; then
+            found_py="$dir/setup_proxy.py"
+        fi
+        if [[ -z "$found_sh" && -f "$dir/setup_proxy.sh" ]]; then
+            found_sh="$dir/setup_proxy.sh"
+        fi
+    done
+
+    if [[ -n "$found_py" ]]; then
+        ok "找到 Python 版: $found_py"
+        printf '  是否运行？[Y/n] '
         read -r answer
         if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
-            bash "$found"
+            python3 "$found_py"
+            return $?
+        fi
+    elif [[ -n "$found_sh" ]]; then
+        ok "找到 Shell 版: $found_sh  (无需 Python)"
+        printf '  是否运行？[Y/n] '
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+            bash "$found_sh"
             return $?
         fi
     else
-        warn "未找到 setup_proxy.sh"
+        warn "未找到 setup_proxy.py / setup_proxy.sh"
         info "你可以手动下载:"
         info "  git clone https://github.com/chenzai666/proxy-setup.git"
         info "  cd proxy-setup && bash setup_proxy.sh"
@@ -186,7 +199,7 @@ main() {
     printf '\033[1m=== Python 3 安装脚本 ===\033[0m\n'
     echo ""
 
-    # 已安装 → 提示并检测 setup 脚本
+    # 已安装 → 检测 setup_proxy.py
     if detect_python; then
         find_and_run_setup
         return 0

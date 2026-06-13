@@ -3,21 +3,16 @@ cd /d "%~dp0"
 
 echo.
 echo ==========
-echo  Python 3 + Proxy Setup
+echo  Python 3 Installer
 echo ==========
 echo.
-echo  Script: %~dp0
-echo.
-
-REM Check if setup_proxy files exist
-if not exist "%~dp0setup_proxy.py" if not exist "%~dp0setup_proxy.ps1" goto MISSING_FILES
 
 REM Check python
 python --version >nul 2>&1
-if not errorlevel 1 goto RUN_SETUP
+if not errorlevel 1 goto PYTHON_OK
 
 python3 --version >nul 2>&1
-if not errorlevel 1 goto RUN_SETUP_PY3
+if not errorlevel 1 goto PYTHON3_OK
 
 REM Not found - try install
 echo  Python not found. Installing via winget...
@@ -35,7 +30,9 @@ if errorlevel 1 (
 
 echo.
 echo  [OK] Python installed!
-echo  Please RE-OPEN terminal and run this bat again.
+echo.
+echo  Please RE-OPEN terminal and run this bat again,
+echo  or run:  python setup_proxy.py
 goto DONE
 
 :NO_WINGET
@@ -44,44 +41,56 @@ goto MANUAL
 
 :MANUAL
 echo.
-echo  Please install Python manually:
-echo  https://www.python.org/downloads/
+echo  Manual install: https://www.python.org/downloads/
 echo  (Check "Add Python to PATH" box!)
 goto DONE
 
-:MISSING_FILES
-echo  [ERR] setup_proxy.py / setup_proxy.ps1 not found!
-echo.
-echo  Please download the FULL repo, not just this bat file:
-echo    https://github.com/chenzai666/proxy-setup
-echo.
-echo  git clone or Download ZIP  (green Code button)
-goto DONE
-
-:RUN_SETUP
+:PYTHON_OK
 python --version
 echo.
-echo  Python OK. Starting proxy setup...
+echo  Python is ready.
 echo.
-timeout /t 2 >nul
 if exist "%~dp0setup_proxy.py" (
+    echo  Starting proxy setup...
+    echo.
+    timeout /t 1 >nul
     python "%~dp0setup_proxy.py"
-) else (
-    powershell -ExecutionPolicy Bypass -File "%~dp0setup_proxy.ps1"
+    goto DONE
 )
+if exist "%~dp0setup_proxy.ps1" (
+    echo  Starting proxy setup...
+    echo.
+    timeout /t 1 >nul
+    powershell -ExecutionPolicy Bypass -File "%~dp0setup_proxy.ps1"
+    goto DONE
+)
+echo  Run proxy setup:
+echo    python setup_proxy.py
+echo    (download from https://github.com/chenzai666/proxy-setup)
 goto DONE
 
-:RUN_SETUP_PY3
+:PYTHON3_OK
 python3 --version
 echo.
-echo  Python OK. Starting proxy setup...
+echo  Python is ready.
 echo.
-timeout /t 2 >nul
 if exist "%~dp0setup_proxy.py" (
+    echo  Starting proxy setup...
+    echo.
+    timeout /t 1 >nul
     python3 "%~dp0setup_proxy.py"
-) else (
-    powershell -ExecutionPolicy Bypass -File "%~dp0setup_proxy.ps1"
+    goto DONE
 )
+if exist "%~dp0setup_proxy.ps1" (
+    echo  Starting proxy setup...
+    echo.
+    timeout /t 1 >nul
+    powershell -ExecutionPolicy Bypass -File "%~dp0setup_proxy.ps1"
+    goto DONE
+)
+echo  Run proxy setup:
+echo    python3 setup_proxy.py
+echo    (download from https://github.com/chenzai666/proxy-setup)
 goto DONE
 
 :DONE

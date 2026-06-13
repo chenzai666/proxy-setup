@@ -139,6 +139,46 @@ install_linux() {
     return 1
 }
 
+# ---- 检测并运行 setup_proxy ----
+
+find_and_run_setup() {
+    echo ""
+    info "检测同目录下的代理配置脚本..."
+
+    local script_dir
+    script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+    local found=""
+    if [[ -f "$script_dir/setup_proxy.sh" ]]; then
+        found="$script_dir/setup_proxy.sh"
+    elif [[ -f "$script_dir/../setup_proxy.sh" ]]; then
+        found="$script_dir/../setup_proxy.sh"
+    elif [[ -f "$HOME/Downloads/setup_proxy.sh" ]]; then
+        found="$HOME/Downloads/setup_proxy.sh"
+    elif [[ -f "$HOME/Downloads/proxy-setup/setup_proxy.sh" ]]; then
+        found="$HOME/Downloads/proxy-setup/setup_proxy.sh"
+    elif [[ -f "$HOME/Downloads/proxy-setup-master/setup_proxy.sh" ]]; then
+        found="$HOME/Downloads/proxy-setup-master/setup_proxy.sh"
+    elif [[ -f "$HOME/Downloads/proxy-setup-main/setup_proxy.sh" ]]; then
+        found="$HOME/Downloads/proxy-setup-main/setup_proxy.sh"
+    fi
+
+    if [[ -n "$found" ]]; then
+        ok "找到: $found"
+        printf '  是否运行代理配置脚本？[Y/n] '
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+            bash "$found"
+            return $?
+        fi
+    else
+        warn "未找到 setup_proxy.sh"
+        info "你可以手动下载:"
+        info "  git clone https://github.com/chenzai666/proxy-setup.git"
+        info "  cd proxy-setup && bash setup_proxy.sh"
+    fi
+}
+
 # ---- 主流程 ----
 
 main() {
@@ -146,12 +186,9 @@ main() {
     printf '\033[1m=== Python 3 安装脚本 ===\033[0m\n'
     echo ""
 
-    # 已安装 → 直接退出
+    # 已安装 → 提示并检测 setup 脚本
     if detect_python; then
-        echo ""
-        info "Python 已就绪，可直接运行:" 
-        printf '    \033[0;36mbash setup_proxy.sh\033[0m   (纯 Shell 版)\n'
-        printf '    \033[0;36mpython3 setup_proxy.py\033[0m  (Python 版)\n'
+        find_and_run_setup
         return 0
     fi
 
@@ -163,10 +200,12 @@ main() {
 
     case "$os_type" in
         Darwin)
-            install_mac
+            install_mac || return 1
+            find_and_run_setup
             ;;
         Linux)
-            install_linux
+            install_linux || return 1
+            find_and_run_setup
             ;;
         *)
             err "不支持的系统: $os_type"

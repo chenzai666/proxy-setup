@@ -20,10 +20,13 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1 | iex
+& ([ScriptBlock]::Create((irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1)))
 ```
 
-> 如果执行策略受限，用 `powershell -ExecutionPolicy Bypass -Command "irm https://... | iex"`
+> 如果执行策略受限：
+> ```powershell
+> powershell -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1)))"
+> ```
 
 ---
 

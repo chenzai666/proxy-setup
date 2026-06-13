@@ -1,3 +1,36 @@
+# Proxy Setup
+
+Windows / Mac / Linux 代理一键配置工具，自动检测 v2rayN / Clash / sing-box 端口，支持 Codex CLI 和 Claude Code。
+
+## 远程执行（无需下载）
+
+> 适用于 `setup_proxy.sh` / `setup_proxy.ps1` 等自包含脚本。
+
+**Mac / Linux:**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh | bash
+```
+
+```bash
+# 或 Python 版
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.py | python3
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1 | iex
+```
+
+> 如果执行策略受限，用 `powershell -ExecutionPolicy Bypass -Command "irm https://... | iex"`
+
+---
+
+## 下载执行
+
+> 适合需要先查看脚本内容再执行的场景。
+
 ### 下载 ZIP
 
 **Windows (PowerShell):**
@@ -62,3 +95,25 @@ bash install_python.sh
 ```
 
 > `install_python.sh` 自动适配 Homebrew（含中科大/清华国内镜像）、apt、yum、dnf、pacman。安装后自动检测并运行 `setup_proxy.py`。
+
+---
+
+## 文件说明
+
+| 文件 | 类型 | 需要 Python | 平台 |
+|------|------|:----------:|------|
+| `setup_proxy.sh` | Shell | 否 | Mac / Linux |
+| `setup_proxy.py` | Python | 是 | 全平台 |
+| `setup_proxy.ps1` | PowerShell | 否 | Windows |
+| `install_python.sh` | Shell | 否 | Mac / Linux |
+| `install_python.bat` | Batch | 否 | Windows |
+
+## 菜单功能
+
+1. 配置代理（自动检测端口）
+2. 配置代理（手动指定端口）
+3. 移除所有代理配置
+4. 验证当前代理连通性
+5. 全链路测试 (OpenAI + Anthropic)
+6. 查看当前代理配置
+0. 退出

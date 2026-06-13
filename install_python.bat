@@ -1,5 +1,5 @@
 @echo off
-title Python 3 Installer for Windows
+cd /d "%~dp0"
 
 echo.
 echo   ========================================
@@ -9,61 +9,56 @@ echo.
 echo   Script dir: %~dp0
 echo.
 
-where python >nul 2>&1
-if %errorlevel%==0 goto python_found
+REM --- Check if Python already installed ---
+python --version >nul 2>&1
+if not errorlevel 1 (
+    python --version 2>&1
+    echo.
+    echo   [OK] Python is ready!
+    echo   --------------------------------
+    echo   Run:   python setup_proxy.py
+    echo   Or:    powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
+    echo   --------------------------------
+    goto end
+)
 
-where python3 >nul 2>&1
-if %errorlevel%==0 goto python3_found
+python3 --version >nul 2>&1
+if not errorlevel 1 (
+    python3 --version 2>&1
+    echo.
+    echo   [OK] Python is ready!
+    echo   --------------------------------
+    echo   Run:   python3 setup_proxy.py
+    echo   --------------------------------
+    goto end
+)
 
-echo   [WARN] Python 3 not found, installing...
+echo   [WARN] Python 3 not found.
 echo.
+echo   Trying to install via winget...
 
-where winget >nul 2>&1
-if not %errorlevel%==0 goto no_winget
+winget --version >nul 2>&1
+if errorlevel 1 goto no_winget
 
-echo   Installing Python 3.13 via winget...
+echo   Downloading Python 3.13...
 winget install Python.Python.3.13 --accept-package-agreements --accept-source-agreements --silent
-if errorlevel 1 goto winget_failed
-
-echo   [OK] Installed! Restart terminal and run: python "%~dp0setup_proxy.py"
-goto done
-
-:winget_failed
-echo   [ERR] winget install failed
-goto done
+if errorlevel 1 (
+    echo   [ERR] winget install failed.
+    goto end
+)
+echo   [OK] Installed!
+echo   Close and re-open terminal, then run: python setup_proxy.py
+goto end
 
 :no_winget
+echo   Winget not available.
 echo   Opening Python download page...
-echo   Make sure to check "Add Python to PATH" during install
-start https://www.python.org/downloads/
+start "" https://www.python.org/downloads/
 echo.
-echo   After install, run:
+echo   After install (check "Add Python to PATH!"), run:
 echo       python "%~dp0setup_proxy.py"
 
-:done
+:end
 echo.
-pause
-exit /b 0
-
-:python_found
-for /f "tokens=*" %%a in ('python --version 2^>^&1') do echo   [OK] Found: %%a
-echo.
-echo   -----
-echo   Run proxy setup:
-echo       cd /d "%~dp0"
-echo       python setup_proxy.py
-echo.
-echo   Or use PowerShell (no Python needed):
-echo       powershell -ExecutionPolicy Bypass -File "%~dp0setup_proxy.ps1"
-echo   -----
-goto done
-
-:python3_found
-for /f "tokens=*" %%a in ('python3 --version 2^>^&1') do echo   [OK] Found: %%a
-echo.
-echo   -----
-echo   Run proxy setup:
-echo       cd /d "%~dp0"
-echo       python3 setup_proxy.py
-echo   -----
-goto done
+echo   Press any key to exit...
+pause >nul

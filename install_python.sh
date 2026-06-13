@@ -33,6 +33,41 @@ detect_python() {
     return 1
 }
 
+# ---- Homebrew 安装（国内镜像优先）----
+
+install_homebrew() {
+    # 国内镜像源（按优先级排序）
+    local mirrors=(
+        "https://mirrors.ustc.edu.cn/brew-install.sh          中科大"
+        "https://mirrors.tuna.tsinghua.edu.cn/homebrew/install.sh  清华"
+        "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh  GitHub官方"
+    )
+
+    for entry in "${mirrors[@]}"; do
+        local url="${entry%% *}"
+        local name="${entry#* }"
+        name="${name##* }"
+        info "尝试 $name 镜像..."
+        if curl -fsSL --connect-timeout 5 --max-time 30 "$url" | /bin/bash -s -- 2>/dev/null; then
+            ok "Homebrew 安装成功 ($name)"
+            # 确保 brew 在 PATH 中（Apple Silicon / Intel）
+            for bp in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+                if [[ -f "$bp" ]]; then
+                    eval "$("$bp" shellenv)"
+                    break
+                fi
+            done
+            return 0
+        fi
+        warn "$name 不可达，尝试下一个..."
+    done
+
+    err "所有镜像均无法连接，请手动安装 Homebrew"
+    info "官方: https://brew.sh"
+    info "Gitee 国内: https://gitee.com/cunkai/HomebrewCN"
+    return 1
+}
+
 # ---- Mac 安装 ----
 
 install_mac() {
@@ -51,18 +86,13 @@ install_mac() {
         return 1
     fi
 
-    # 方案2: 没有 Homebrew，先装 Homebrew
+    # 方案2: 没有 Homebrew，先装 Homebrew（国内镜像优先）
     warn "未检测到 Homebrew"
     printf '  是否先安装 Homebrew（推荐包管理器）？[Y/n] '
     read -r answer
     if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
-        info "安装 Homebrew..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        install_homebrew
         if command -v brew &>/dev/null; then
-            # 确保 brew 在 PATH 中（Apple Silicon）
-            if [[ -f /opt/homebrew/bin/brew ]]; then
-                eval "$(/opt/homebrew/bin/brew shellenv)"
-            fi
             brew install python@3.13 2>/dev/null || brew install python3
             ok "Python 3 安装成功"
             python3 --version

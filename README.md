@@ -27,7 +27,7 @@ curl.exe -sL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/set
 
 > 如果不通，用代理镜像地址：
 > ```powershell
-> $u='https://ghproxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1';curl.exe -sL $u -o $env:TEMP\sp.ps1; powershell -ep bypass -f $env:TEMP\sp.ps1; ri $env:TEMP\sp.ps1
+> $u='https://gh-proxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1';curl.exe -sL $u -o $env:TEMP\sp.ps1; powershell -ep bypass -f $env:TEMP\sp.ps1; ri $env:TEMP\sp.ps1
 > ```
 
 ---

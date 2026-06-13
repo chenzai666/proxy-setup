@@ -1,157 +1,119 @@
 @echo off
-cd /d "%~dp0"
+setlocal
 
 echo.
 echo ==========
-echo  Python 3 Installer
+echo  Python 3 Installer + Proxy Setup Launcher
 echo ==========
 echo.
 
-REM -----------------------------------------------------------
-REM  Step 1: Find setup_proxy.py
-REM -----------------------------------------------------------
-set "PROXY_SCRIPT="
+REM ---- Step 1: Find setup_proxy files ----
+set "FOUND="
 
-echo  Searching for setup_proxy.py...
+if exist "%~dp0setup_proxy.py"  set "FOUND=%~dp0setup_proxy.py"  & goto :found
+if exist "%~dp0setup_proxy.ps1" set "FOUND=%~dp0setup_proxy.ps1" & goto :found
 
-REM Exact known locations (fast)
-call :check "%~dp0setup_proxy.py"
-call :check "%~dp0setup_proxy.ps1"
-call :check "C:\Users\tt\WorkBuddy\Claw\proxy-setup\setup_proxy.py"
-call :check "C:\Users\tt\WorkBuddy\Claw\proxy-setup\setup_proxy.ps1"
+if exist "C:\Users\tt\WorkBuddy\Claw\proxy-setup\setup_proxy.py"  set "FOUND=C:\Users\tt\WorkBuddy\Claw\proxy-setup\setup_proxy.py"  & goto :found
+if exist "C:\Users\tt\WorkBuddy\Claw\proxy-setup\setup_proxy.ps1" set "FOUND=C:\Users\tt\WorkBuddy\Claw\proxy-setup\setup_proxy.ps1" & goto :found
 
-REM Recursive search from bat location (1 level)
-if not defined PROXY_SCRIPT (
-    for /d %%d in ("%~dp0*proxy*") do (
-        if exist "%%d\setup_proxy.py" set "PROXY_SCRIPT=%%d\setup_proxy.py"
-        if not defined PROXY_SCRIPT if exist "%%d\setup_proxy.ps1" set "PROXY_SCRIPT=%%d\setup_proxy.ps1"
-        if defined PROXY_SCRIPT (
-            echo    Found: %PROXY_SCRIPT%
-            goto after_check
+for %%B in ("%USERPROFILE%\Downloads" "%USERPROFILE%\Desktop" "%USERPROFILE%\Documents") do (
+    if exist "%%~B\" (
+        for /d %%D in ("%%~B\proxy*") do (
+            if exist "%%D\setup_proxy.py"  set "FOUND=%%D\setup_proxy.py"  & goto :found
+            if exist "%%D\setup_proxy.ps1" set "FOUND=%%D\setup_proxy.ps1" & goto :found
         )
     )
 )
 
-REM Recursive search from common download dirs
-if not defined PROXY_SCRIPT (
-    for %%b in ("%USERPROFILE%\Downloads" "%USERPROFILE%\Desktop" "%USERPROFILE%\Documents") do (
-        if exist "%%~b\" (
-            for /d %%d in ("%%~b\*proxy*") do (
-                if exist "%%d\setup_proxy.py" set "PROXY_SCRIPT=%%d\setup_proxy.py"
-                if not defined PROXY_SCRIPT if exist "%%d\setup_proxy.ps1" set "PROXY_SCRIPT=%%d\setup_proxy.ps1"
-                if defined PROXY_SCRIPT (
-                    echo    Found: %PROXY_SCRIPT%
-                    goto after_check
-                )
-            )
-        )
-    )
-)
-
-goto after_check
-
-:check
-if defined PROXY_SCRIPT exit /b 0
-set "F=%~1"
-if exist "%F%" (
-    set "PROXY_SCRIPT=%F%"
-    echo    Found: %F%
-)
-exit /b 0
-
-:after_check
-
-if not defined PROXY_SCRIPT (
+:found
+if not defined FOUND (
+    echo   setup_proxy files not found.
     echo.
-    echo  [INFO] setup_proxy files not found.
-    echo.
-    echo  Files in this folder:
-    echo  ---------------------
+    echo   Contents of this folder:
+    echo   ---------------------------
     dir /b "%~dp0" 2>nul
-    echo  ---------------------
+    echo   ---------------------------
+    echo.
+    set /p "FOLDER=  Paste full path to setup_proxy folder: "
+    if not defined FOLDER goto :notfound
+    REM Remove trailing backslash if any
+    if "%FOLDER:~-1%"=="\" set "FOLDER=%FOLDER:~0,-1%"
+    if exist "%FOLDER%\setup_proxy.py"  set "FOUND=%FOLDER%\setup_proxy.py"  & goto :check_python
+    if exist "%FOLDER%\setup_proxy.ps1" set "FOUND=%FOLDER%\setup_proxy.ps1" & goto :check_python
+) else (
+    echo   [OK] Found: %FOUND%
+    echo.
+    goto :check_python
 )
 
-REM -----------------------------------------------------------
-REM  Step 2: Check Python
-REM -----------------------------------------------------------
+:notfound
+echo.
+echo   Download full package:
+echo   https://github.com/chenzai666/proxy-setup
+goto :done
+
+:check_python
+echo   [OK] Files ready: %FOUND%
+echo.
+
+REM ---- Step 2: Check / Install Python ----
 python --version >nul 2>&1
-if not errorlevel 1 goto PYTHON_OK
+if not errorlevel 1 goto :py_ok
 
 python3 --version >nul 2>&1
-if not errorlevel 1 goto PYTHON3_OK
+if not errorlevel 1 goto :py3_ok
 
+echo   Python not found. Installing via winget...
 echo.
-echo  Python not found. Installing via winget...
 
 winget --version >nul 2>&1
-if errorlevel 1 goto NO_WINGET
+if errorlevel 1 goto :no_winget
 
 winget install Python.Python.3.13 --accept-package-agreements --accept-source-agreements
-if errorlevel 1 (
-    echo.
-    echo  [ERR] Install failed.
-    goto MANUAL
-)
+if errorlevel 1 goto :no_winget
 
 echo.
-echo  [OK] Python installed! Re-run this bat.
-goto DONE
+echo   [OK] Python installed. Run this bat again to launch.
+goto :done
 
-:NO_WINGET
-echo  winget not found.
-goto MANUAL
-
-:MANUAL
+:no_winget
 echo.
-echo  Manual install: https://www.python.org/downloads/
-echo  (Check "Add Python to PATH"!)
-goto DONE
+echo   Manual install: https://www.python.org/downloads/
+echo   (Check "Add Python to PATH" during install!)
+goto :done
 
-:PYTHON_OK
+:py_ok
 python --version
-echo.
-echo  Python ready.
-echo.
-if defined PROXY_SCRIPT goto RUN_PROXY
-echo  setup_proxy files not found.
-echo  Place this bat next to setup_proxy.py, or download:
-echo  https://github.com/chenzai666/proxy-setup
-goto DONE
+goto :run
 
-:PYTHON3_OK
+:py3_ok
 python3 --version
-echo.
-echo  Python ready.
-echo.
-if defined PROXY_SCRIPT goto RUN_PROXY_PY3
-echo  setup_proxy files not found.
-echo  Place this bat next to setup_proxy.py, or download:
-echo  https://github.com/chenzai666/proxy-setup
-goto DONE
+goto :run_py3
 
-:RUN_PROXY
+REM ---- Step 3: Launch ----
+:run
 echo.
-echo  Starting proxy setup...
+echo   Starting proxy setup...
 timeout /t 1 >nul
-if "%PROXY_SCRIPT:~-3%"==".py" (
-    python "%PROXY_SCRIPT%"
+echo "%FOUND%" | find ".py" >nul
+if not errorlevel 1 (
+    python "%FOUND%"
 ) else (
-    powershell -ExecutionPolicy Bypass -File "%PROXY_SCRIPT%"
+    powershell -ExecutionPolicy Bypass -File "%FOUND%"
 )
-goto DONE
+goto :done
 
-:RUN_PROXY_PY3
+:run_py3
 echo.
-echo  Starting proxy setup...
+echo   Starting proxy setup...
 timeout /t 1 >nul
-if "%PROXY_SCRIPT:~-3%"==".py" (
-    python3 "%PROXY_SCRIPT%"
+echo "%FOUND%" | find ".py" >nul
+if not errorlevel 1 (
+    python3 "%FOUND%"
 ) else (
-    powershell -ExecutionPolicy Bypass -File "%PROXY_SCRIPT%"
+    powershell -ExecutionPolicy Bypass -File "%FOUND%"
 )
-goto DONE
 
-:DONE
+:done
 echo.
-echo  Press any key to close...
 pause

@@ -457,6 +457,9 @@ main() {
                 show_current_config
                 echo ""
                 bold "=== 配置完成 ==="
+                warn "http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险"
+                info "防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS"
+                echo ""
                 bold "  请运行以下命令使环境变量立即生效（当前终端）："
                 printf '    \033[0;36msource %s\033[0m\n' "$rc"
                 echo "  或重新打开终端后自动生效。"
@@ -475,6 +478,9 @@ main() {
                 show_current_config
                 echo ""
                 bold "=== 配置完成 ==="
+                warn "http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险"
+                info "防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS"
+                echo ""
                 bold "  请运行: source $rc"
                 ;;
             3)

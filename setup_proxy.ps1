@@ -509,6 +509,9 @@ function Main {
 
                 Write-Host ""
                 bold "=== 配置完成 ==="
+                warn "http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险"
+                info "防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS"
+                Write-Host ""
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
                 Write-Host "  PowerShell 当前窗口可运行: . `$PROFILE"
                 Write-Host "  CMD 已配置 AutoRun，新窗口自动加载"
@@ -533,6 +536,9 @@ function Main {
 
                 Write-Host ""
                 bold "=== 配置完成 ==="
+                warn "http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险"
+                info "防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS"
+                Write-Host ""
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
             }
             "3" {

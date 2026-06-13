@@ -807,6 +807,9 @@ def main():
             print()
             bold("=== 配置完成 ===")
             print_how_to_apply()
+            print()
+            warn("http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险")
+            info("防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS")
 
         elif choice == "2":
             try:
@@ -834,6 +837,9 @@ def main():
             print()
             bold("=== 配置完成 ===")
             print_how_to_apply()
+            print()
+            warn("http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险")
+            info("防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS")
 
         elif choice == "3":
             remove_proxy(rc_file)

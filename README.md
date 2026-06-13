@@ -26,21 +26,25 @@
 
 ## 快速开始
 
-### Windows（推荐）
+### Windows
 
-如果你已安装 Python 3，直接用 PowerShell 版：
+首选方案（需要 Python 3）：
+
+```powershell
+python setup_proxy.py
+```
+
+如果没有 Python 3，先运行安装脚本（会自动检测脚本目录并启动）：
+
+```
+.\install_python.bat
+```
+
+无需 Python 的方案（纯 PowerShell）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
 ```
-
-如果没有 Python 3，先运行安装脚本（会自动检测脚本目录）：
-
-```powershell
-.\install_python.bat
-```
-
-安装完成后，`install_python.bat` 会自动搜索并运行同目录下的 `setup_proxy.ps1`。
 
 ### 下载方式
 

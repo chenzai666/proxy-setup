@@ -19,15 +19,15 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 
 **Windows (PowerShell):**
 
-推荐方式（下载到临时文件，无缓存/编码问题）：
-
 ```powershell
-curl.exe -sL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1 -o $env:TEMP\sp.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\sp.ps1; Remove-Item $env:TEMP\sp.ps1
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
 ```
 
-> 如果不通，用代理镜像地址：
+> `WebClient` + `iex` 方式直接在内存执行，无 BOM/编码问题，干净可靠。
+>
+> 如果 GitHub 不通，用国内镜像：
 > ```powershell
-> $u='https://gh-proxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1';curl.exe -sL $u -o $env:TEMP\sp.ps1; powershell -ep bypass -f $env:TEMP\sp.ps1; ri $env:TEMP\sp.ps1
+> $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://gh-proxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
 > ```
 
 ---

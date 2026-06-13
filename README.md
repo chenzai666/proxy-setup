@@ -26,31 +26,9 @@
 
 ## 快速开始
 
-### Windows
+### 1. 下载
 
-首选方案（需要 Python 3）：
-
-```powershell
-python setup_proxy.py
-```
-
-如果没有 Python 3，先运行安装脚本（会自动检测脚本目录并启动）：
-
-```
-.\install_python.bat
-```
-
-无需 Python 的方案（纯 PowerShell）：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
-```
-
-### 下载方式
-
-**方式一：一键下载解压（推荐）**
-
-PowerShell 中执行：
+**PowerShell 一键下载:**
 
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip" -OutFile "$env:USERPROFILE\Downloads\proxy-setup.zip"
@@ -58,39 +36,38 @@ Expand-Archive -Path "$env:USERPROFILE\Downloads\proxy-setup.zip" -DestinationPa
 cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-master"
 ```
 
-**方式二：Git Clone**
+**或 Git Clone:**
 
 ```bash
 git clone https://github.com/chenzai666/proxy-setup.git
 cd proxy-setup
 ```
 
-### Mac / Linux
+### 2. 运行
 
-直接运行（无需 Python）：
+**Windows — 有 Python 3:**
 
-```bash
-bash setup_proxy.sh
+```
+.\install_python.bat
 ```
 
-如果没有 Python 3，先安装：
-
-```bash
-bash install_python.sh
-```
-
-> `install_python.sh` 自动适配 Homebrew（含中科大/清华国内镜像）、apt、yum、dnf、pacman。
-
-## 用法
-
-### Windows
+**Windows — 无 Python 3 (纯 PowerShell):**
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
 ```
 
-### Mac / Linux
+**Mac / Linux:**
 
 ```bash
 bash setup_proxy.sh
 ```
+
+如果需要 Python 版（先装 Python）：
+
+```bash
+bash install_python.sh
+```
+
+> `install_python.sh` 自动适配 Homebrew（含中科大/清华国内镜像）、apt、yum、dnf、pacman。安装后自动检测并运行 `setup_proxy.py`。
+

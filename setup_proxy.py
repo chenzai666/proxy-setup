@@ -444,12 +444,6 @@ def remove_proxy(rc_file: Path):
     """清除代理配置块"""
     is_ps = IS_WINDOWS or rc_file.suffix in (".ps1",)
 
-    # 清除当前进程环境变量
-    for k in ["http_proxy", "https_proxy", "all_proxy",
-              "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-              "no_proxy", "NO_PROXY", "ANTHROPIC_BASE_URL"]:
-        os.environ.pop(k, None)
-
     if rc_file.exists():
         content = rc_file.read_text(encoding="utf-8")
         pattern = re.compile(
@@ -591,35 +585,88 @@ def full_connectivity_test(http_port: int):
     else:
         warn("部分 API 不通，检查对应目标是否被节点屏蔽")
 
-    # 查出口 IP
-    exit_ip, region = _fetch_exit_ip(http_port)
-    if exit_ip:
-        if region:
-            ok(f"出口 IP: {exit_ip}  ({region})")
+    # 用 Cloudflare trace 检测访问 Claude 和 OpenAI 的真实出口 IP
+    print(f"  {'─' * 45}")
+    bold("  出口 IP 检测（通过 Cloudflare trace）:")
+
+    for svc_name, fetch_func in [("Claude", _fetch_claude_ip), ("OpenAI", _fetch_openai_ip)]:
+        ip, colo, warp = fetch_func(http_port)
+        if ip:
+            parts = [f"{svc_name}: {ip}"]
+            if colo:
+                parts.append(f"接入: {colo}")
+            if warp and warp != "off":
+                parts.append(f"WARP: {warp}")
+            ok(" | ".join(parts))
         else:
-            ok(f"出口 IP: {exit_ip}")
+            warn(f"  {svc_name}: 无法获取（代理可能未连外网）")
 
     return all_ok
 
 
-def _fetch_exit_ip(http_port: int) -> tuple:
-    """通过代理查询出口 IP 和地区，返回 (ip, region)"""
-    proxy_url = f"http://{HOST}:{http_port}"
+def _curl_proxy(http_port: int, url: str, max_time: int = 12) -> str:
+    """
+    通过代理执行 curl GET，返回 stdout 原文。
+    内部统一处理：查找 curl、构建 proxy_url、CREATE_NO_WINDOW 标志。
+    """
     curl = shutil.which("curl") or (shutil.which("curl.exe") if IS_WINDOWS else None)
     if not curl:
-        return "", ""
+        return ""
     cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-
-    # 优先用 ip-api.com（免费，返回国家/城市/ISP）
+    proxy_url = f"http://{HOST}:{http_port}"
     try:
         r = subprocess.run(
-            [curl, "-s", "--proxy", proxy_url, "--connect-timeout", "5", "--max-time", "8",
-             "http://ip-api.com/json?fields=country,city,regionName,isp,query"],
-            capture_output=True, text=True, timeout=10, creationflags=cf
+            [curl, "-s", "--proxy", proxy_url,
+             "--connect-timeout", "8", "--max-time", str(max_time),
+             url],
+            capture_output=True, text=True, timeout=max_time + 5, creationflags=cf
         )
-        data = r.stdout.strip()
-        if data.startswith("{"):
-            j = json.loads(data)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _parse_cf_trace(output: str) -> dict:
+    """解析 Cloudflare /cdn-cgi/trace 的 key=value 格式，返回 dict"""
+    trace = {}
+    if not output or "=" not in output:
+        return trace
+    for line in output.splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            trace[k.strip()] = v.strip()
+    return trace
+
+
+def _fetch_cf_trace_ip(http_port: int, trace_url: str) -> tuple:
+    """
+    通用：通过代理访问任意 Cloudflare trace URL，返回 (ip, colo, warp)
+    trace_url: 如 https://claude.ai/cdn-cgi/trace 或 https://chat.openai.com/cdn-cgi/trace
+    """
+    output = _curl_proxy(http_port, trace_url)
+    if not output:
+        return "", "", ""
+    trace = _parse_cf_trace(output)
+    return trace.get("ip", ""), trace.get("colo", ""), trace.get("warp", "off")
+
+
+def _fetch_claude_ip(http_port: int) -> tuple:
+    """访问 Claude 时的出口 IP（通过 claude.ai/cdn-cgi/trace）"""
+    return _fetch_cf_trace_ip(http_port, "https://claude.ai/cdn-cgi/trace")
+
+
+def _fetch_openai_ip(http_port: int) -> tuple:
+    """访问 OpenAI 时的出口 IP（通过 chat.openai.com/cdn-cgi/trace）"""
+    return _fetch_cf_trace_ip(http_port, "https://chat.openai.com/cdn-cgi/trace")
+
+
+def _fetch_exit_ip(http_port: int) -> tuple:
+    """通过代理查询出口 IP 和地区（兜底方法），返回 (ip, region)"""
+    # 优先用 ip-api.com
+    output = _curl_proxy(http_port, "http://ip-api.com/json?fields=country,city,regionName,isp,query", max_time=8)
+    if output and output.startswith("{"):
+        try:
+            j = json.loads(output)
             ip = j.get("query", "")
             if ip:
                 parts = [p for p in [j.get("country", ""), j.get("regionName", ""), j.get("city", "")] if p]
@@ -627,21 +674,14 @@ def _fetch_exit_ip(http_port: int) -> tuple:
                 if j.get("isp"):
                     region += f" [{j['isp']}]"
                 return ip, region
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     # 兜底：纯 IP 服务
     for svc in ("https://ifconfig.me", "https://api.ipify.org", "https://ip.sb"):
-        try:
-            r = subprocess.run(
-                [curl, "-s", "--proxy", proxy_url, "--connect-timeout", "5", "--max-time", "8", svc],
-                capture_output=True, text=True, timeout=10, creationflags=cf
-            )
-            ip = r.stdout.strip()
-            if ip and not ip.startswith("{") and not ip.startswith("<"):
-                return ip, ""
-        except Exception:
-            continue
+        output = _curl_proxy(http_port, svc, max_time=8)
+        if output and not output.startswith("{") and not output.startswith("<"):
+            return output.strip(), ""
     return "", ""
 
 
@@ -702,6 +742,7 @@ def print_menu():
     print("  4) 验证当前代理连通性")
     print("  5) 全链路测试 (OpenAI + Anthropic)")
     print("  6) 查看当前代理配置")
+    print("  7) 检测出口 IP (Claude + OpenAI cf-trace)")
     print("  0) 退出")
     print()
 
@@ -774,7 +815,7 @@ def main():
         warn(f"未测试的平台: {platform.system()}，部分功能可能不可用")
 
     rc_file = get_rc_file()
-    info(f"代理配置将写入: {rc_file}")
+    info(f"配置文件: {rc_file}")
 
     while True:
         print_menu()
@@ -807,9 +848,6 @@ def main():
             print()
             bold("=== 配置完成 ===")
             print_how_to_apply()
-            print()
-            warn("http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险")
-            info("防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS")
 
         elif choice == "2":
             try:
@@ -837,9 +875,6 @@ def main():
             print()
             bold("=== 配置完成 ===")
             print_how_to_apply()
-            print()
-            warn("http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险")
-            info("防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS")
 
         elif choice == "3":
             remove_proxy(rc_file)
@@ -855,6 +890,46 @@ def main():
 
         elif choice == "6":
             show_current_config()
+
+        elif choice == "7":
+            # 检测访问 Claude 和 OpenAI 的出口 IP（通过 cf-trace）
+            http_port, _ = auto_detect_ports()
+            green = "\033[32m"
+            reset = "\033[0m"
+            bold(f"\n  正在通过代理端口 {http_port} 检测出口 IP ...")
+            print(f"  {'─' * 52}")
+
+            for svc_name, trace_url in [
+                ("Claude", "https://claude.ai/cdn-cgi/trace"),
+                ("OpenAI", "https://chat.openai.com/cdn-cgi/trace"),
+            ]:
+                output = _curl_proxy(http_port, trace_url)
+                if not output:
+                    warn(f"  {svc_name}: 无法访问 {trace_url}")
+                    continue
+
+                trace = _parse_cf_trace(output)
+                ip   = trace.get("ip", "")
+                colo = trace.get("colo", "")
+                warp = trace.get("warp", "off")
+
+                if ip:
+                    parts = [f"{svc_name} 出口 IP: {ip}"]
+                    if colo:
+                        parts.append(f"接入: {colo}")
+                    if warp and warp != "off":
+                        parts.append(f"WARP: {warp}")
+                    print(f"  {green}[OK]{reset} {' | '.join(parts)}")
+                else:
+                    warn(f"  {svc_name}: trace 返回异常")
+
+                # 显示原始 trace 输出
+                print(f"\n  --- {svc_name} trace 原始输出 ---")
+                for line in output.splitlines():
+                    print(f"  {line}")
+                print(f"  {'─' * 52}")
+
+            ok("检测完成")
 
         else:
             warn("无效选项，请重新输入")

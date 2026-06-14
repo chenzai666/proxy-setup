@@ -302,7 +302,35 @@ function Invoke-CurlTest($http_port, $url) {
     }
 }
 
+
+function Get-CfTraceIP($http_port, $trace_url) {
+    $proxy = "http://${PROXY_HOST}:${http_port}"
+    try {
+        $r = curl.exe -s --proxy $proxy --connect-timeout 8 --max-time 12 $trace_url 2>&1
+        if ($r -and $r -match '=') {
+            $trace = @{}
+            foreach ($line in ($r -split "`r?`n")) {
+                if ($line -match '^([^=]+)=(.*)$') {
+                    $trace[$Matches[1]] = $Matches[2]
+                }
+            }
+            return @{
+                ip   = $trace["ip"]
+                colo = $trace["colo"]
+                warp = $trace["warp"]
+                raw  = $r
+            }
+        }
+    } catch {}
+    return @{ ip=""; colo=""; warp="off"; raw="" }
+}
 function Get-ExitIP($http_port) {
+    # 优先用 Cloudflare trace（更准确）
+    $claude = Get-CfTraceIP $http_port "https://claude.ai/cdn-cgi/trace"
+    if ($claude.ip) { return @($claude.ip, "Claude: colo=$($claude.colo)") }
+    $openai = Get-CfTraceIP $http_port "https://chat.openai.com/cdn-cgi/trace"
+    if ($openai.ip) { return @($openai.ip, "OpenAI: colo=$($openai.colo)") }
+    # 兜底：ip-api.com
     $proxy = "http://${PROXY_HOST}:${http_port}"
 
     try {
@@ -371,10 +399,20 @@ function Test-FullConnectivity($http_port) {
         warn "部分 API 不通，检查对应目标是否被节点屏蔽"
     }
 
-    $ip, $region = Get-ExitIP $http_port
-    if ($ip) {
-        if ($region) { ok "出口 IP: $ip  ($region)" }
-        else { ok "出口 IP: $ip" }
+    # 用 Cloudflare trace 检测出口 IP（Claude + OpenAI）
+    Write-Host ""
+    bold "  出口 IP 检测（通过 Cloudflare trace）:"
+    foreach ($svc_url in @("Claude:https://claude.ai/cdn-cgi/trace", "OpenAI:https://chat.openai.com/cdn-cgi/trace")) {
+        $svc, $trace_url = $svc_url -split ":", 2
+        $result = Get-CfTraceIP $http_port $trace_url
+        if ($result.ip) {
+            $parts = @("$svc`: $($result.ip)")
+            if ($result.colo) { $parts += "接入: $($result.colo)" }
+            if ($result.warp -and $result.warp -ne "off") { $parts += "WARP: $($result.warp)" }
+            ok ($parts -join " | ")
+        } else {
+            warn "  $svc`: 无法获取（代理可能未连外网）"
+        }
     }
 }
 
@@ -470,6 +508,7 @@ function Show-Menu {
     Write-Host "  4) 验证当前代理连通性"
     Write-Host "  5) 全链路测试 (OpenAI + Anthropic)"
     Write-Host "  6) 查看当前代理配置"
+    Write-Host "  7) 检测出口 IP (Claude + OpenAI cf-trace)"
     Write-Host "  0) 退出"
     Write-Host ""
 }
@@ -482,7 +521,7 @@ function Main {
 
     while ($true) {
         Show-Menu
-        $choice = Read-Host "请选择 [0-6]"
+        $choice = Read-Host "请选择 [0-7]"
 
         switch ($choice) {
             "0" { Write-Host "退出"; break }
@@ -555,6 +594,30 @@ function Main {
             }
             "6" {
                 Show-CurrentConfig
+            }
+            "7") {
+                $hp, $null = Auto-DetectPorts
+                bold ""
+                bold "  正在通过代理端口 $hp 检测出口 IP ..."
+                Write-Host "  " + ("-" * 50)
+
+                foreach ($svc_url in @("Claude:https://claude.ai/cdn-cgi/trace", "OpenAI:https://chat.openai.com/cdn-cgi/trace")) {
+                    $svc, $trace_url = $svc_url -split ":", 2
+                    $result = Get-CfTraceIP $hp $trace_url
+                    if ($result.ip) {
+                        Write-Host "  [OK] $($svc) 出口 IP: $($result.ip)" -ForegroundColor Green
+                        if ($result.colo) { Write-Host "        接入: $($result.colo)" }
+                        if ($result.warp -and $result.warp -ne "off") { Write-Host "        WARP: $($result.warp)" }
+                        # 显示原始 trace 输出
+                        Write-Host ""
+                        Write-Host "  --- $($svc) trace 原始输出 ---"
+                        ($result.raw -split "`r?`n") | ForEach-Object { Write-Host "  $_" }
+                        Write-Host ("  " + ("-" * 50))
+                    } else {
+                        warn "  $($svc): 无法访问 $trace_url"
+                    }
+                }
+                ok "检测完成"
             }
             default {
                 warn "无效选项，请重新输入"

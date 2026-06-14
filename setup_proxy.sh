@@ -305,9 +305,9 @@ full_connectivity_test() {
     local hp=$1
     bold ""
     bold "  全面连通性测试 (端口 $hp)"
-    printf "  %s\n" "─────────────────────────────────────────────────"
+    printf "  %s\n" "──────────────────────────────────────────────────"
     printf "  %-20s %-10s %-10s %s\n" "服务" "状态" "耗时" "对应工具"
-    printf "  %s\n" "─────────────────────────────────────────────────"
+    printf "  %s\n" "──────────────────────────────────────────────────"
 
     local all_ok=true
     # OpenAI
@@ -316,7 +316,8 @@ full_connectivity_test() {
     o_exit=$(echo "$o_out" | cut -d'|' -f1)
     o_code=$(echo "$o_out" | cut -d'|' -f2)
     o_time=$(echo "$o_out" | cut -d'|' -f3)
-    local o_ms=$(awk "BEGIN {printf \"%.0f\", $o_time * 1000}" 2>/dev/null || echo "0")
+    local o_ms
+    o_ms=$(awk "BEGIN {printf \"%.0f\", $o_time * 1000}" 2>/dev/null || echo "0")
 
     if [[ "$o_exit" == "0" && "$o_code" != "000" ]]; then
         local tag
@@ -333,7 +334,8 @@ full_connectivity_test() {
     a_exit=$(echo "$a_out" | cut -d'|' -f1)
     a_code=$(echo "$a_out" | cut -d'|' -f2)
     a_time=$(echo "$a_out" | cut -d'|' -f3)
-    local a_ms=$(awk "BEGIN {printf \"%.0f\", $a_time * 1000}" 2>/dev/null || echo "0")
+    local a_ms
+    a_ms=$(awk "BEGIN {printf \"%.0f\", $a_time * 1000}" 2>/dev/null || echo "0")
 
     if [[ "$a_exit" == "0" && "$a_code" != "000" ]]; then
         local tag
@@ -344,43 +346,33 @@ full_connectivity_test() {
         printf "  %-20s \033[31m%-10s\033[0m %-8sms Claude Code\n" "Anthropic API" "[失败]" "$a_ms"
     fi
 
-    printf "  %s\n" "─────────────────────────────────────────────────"
+    printf "  %s\n" "──────────────────────────────────────────────────"
     if $all_ok; then
         ok "OpenAI & Anthropic 均连通，Codex / Claude Code 可用"
     else
         warn "部分 API 不通，检查对应目标是否被节点屏蔽"
     fi
 
-    local exit_data exit_ip exit_region
-    exit_data=$(curl -s --proxy "http://$HOST:$hp" --connect-timeout 5 --max-time 8 \
-        "http://ip-api.com/json?fields=country,city,regionName,isp,query" 2>/dev/null || echo "")
-    if [[ -n "$exit_data" && "$exit_data" == "{"* ]]; then
-        exit_ip=$(echo "$exit_data" | grep -o '"query":"[^"]*"' | head -1 | sed 's/"query":"\(.*\)"/\1/')
-        local country city region isp
-        country=$(echo "$exit_data" | grep -o '"country":"[^"]*"' | head -1 | sed 's/"country":"\(.*\)"/\1/')
-        region=$(echo "$exit_data" | grep -o '"regionName":"[^"]*"' | head -1 | sed 's/"regionName":"\(.*\)"/\1/')
-        city=$(echo "$exit_data" | grep -o '"city":"[^"]*"' | head -1 | sed 's/"city":"\(.*\)"/\1/')
-        isp=$(echo "$exit_data" | grep -o '"isp":"[^"]*"' | head -1 | sed 's/"isp":"\(.*\)"/\1/')
-        exit_region="$country"
-        [[ -n "$region" ]] && exit_region="$exit_region, $region"
-        [[ -n "$city" ]] && exit_region="$exit_region, $city"
-        [[ -n "$isp" ]] && exit_region="$exit_region [$isp]"
-    fi
-    if [[ -n "$exit_ip" ]]; then
-        if [[ -n "$exit_region" ]]; then
-            ok "出口 IP: $exit_ip  ($exit_region)"
+    # 用 Cloudflare trace 检测出口 IP（Claude + OpenAI）
+    printf "  %s\n" "──────────────────────────────────────────────────"
+    bold "  出口 IP 检测（通过 Cloudflare trace）:"
+    for svc_url in "Claude:https://claude.ai/cdn-cgi/trace" "OpenAI:https://chat.openai.com/cdn-cgi/trace"; do
+        local svc="${svc_url%%:*}"
+        local trace_url="${svc_url##*:}"
+        local trace_out ip colo warp
+        trace_out=$(curl -s --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 12 "$trace_url" 2>/dev/null || echo "")
+        if [[ -n "$trace_out" && "$trace_out" == *"="* ]]; then
+            ip=$(echo "$trace_out" | grep -E "^ip=" | head -1 | cut -d'=' -f2)
+            colo=$(echo "$trace_out" | grep -E "^colo=" | head -1 | cut -d'=' -f2)
+            warp=$(echo "$trace_out" | grep -E "^warp=" | head -1 | cut -d'=' -f2)
+            local parts=("$svc: $ip")
+            [[ -n "$colo" ]] && parts+=("接入: $colo")
+            [[ -n "$warp" && "$warp" != "off" ]] && parts+=("WARP: $warp")
+            ok "$(IFS=' | '; echo "${parts[*]}")"
         else
-            ok "出口 IP: $exit_ip"
+            warn "  $svc: 无法获取（代理可能未连外网）"
         fi
-    else
-        local fallback_ip
-        fallback_ip=$(curl -s --proxy "http://$HOST:$hp" --connect-timeout 5 --max-time 8 "https://ifconfig.me" 2>/dev/null || \
-                      curl -s --proxy "http://$HOST:$hp" --connect-timeout 5 --max-time 8 "https://api.ipify.org" 2>/dev/null || \
-                      curl -s --proxy "http://$HOST:$hp" --connect-timeout 5 --max-time 8 "https://ip.sb" 2>/dev/null || echo "")
-        if [[ -n "$fallback_ip" && "$fallback_ip" != *"{"* && "$fallback_ip" != *"<"* ]]; then
-            ok "出口 IP: $fallback_ip"
-        fi
-    fi
+    done
 }
 
 set_env_current() {
@@ -430,7 +422,8 @@ print_menu() {
     echo "  4) 验证当前代理连通性"
     echo "  5) 全链路测试 (OpenAI + Anthropic)"
     echo "  6) 查看当前代理配置"
-    echo "  7) 清空当前会话环境变量"
+    echo "  7) 检测出口 IP (Claude + OpenAI cf-trace)"
+    echo "  8) 清空当前会话环境变量"
     echo "  0) 退出"
     echo ""
 }
@@ -443,7 +436,7 @@ main() {
 
     while true; do
         print_menu
-        read -rp "请选择 [0-7]: " choice
+        read -rp "请选择 [0-8]: " choice
         case $choice in
             1)
                 read -r hp sp <<< "$(auto_detect)"
@@ -499,6 +492,38 @@ main() {
                 show_current_config
                 ;;
             7)
+                read -r hp _ <<< "$(auto_detect)"
+                bold ""
+                bold "  正在通过代理端口 $hp 检测出口 IP ..."
+                printf "  %s\n" "──────────────────────────────────────────────────────"
+                for svc_url in "Claude:https://claude.ai/cdn-cgi/trace" "OpenAI:https://chat.openai.com/cdn-cgi/trace"; do
+                    local svc="${svc_url%%:*}"
+                    local trace_url="${svc_url##*:}"
+                    local trace_out
+                    trace_out=$(curl -s --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 12 "$trace_url" 2>/dev/null || echo "")
+                    if [[ -n "$trace_out" && "$trace_out" == *"="* ]]; then
+                        local ip colo warp
+                        ip=$(echo "$trace_out" | grep -E "^ip=" | head -1 | cut -d'=' -f2)
+                        colo=$(echo "$trace_out" | grep -E "^colo=" | head -1 | cut -d'=' -f2)
+                        warp=$(echo "$trace_out" | grep -E "^warp=" | head -1 | cut -d'=' -f2)
+                        printf "  \033[32m[OK]\033[0m %s 出口 IP: %s" "$svc" "$ip"
+                        [[ -n "$colo" ]] && printf "  |  接入: %s" "$colo"
+                        [[ -n "$warp" && "$warp" != "off" ]] && printf "  |  WARP: %s" "$warp"
+                        printf "\n"
+                        # 显示原始 trace 输出
+                        echo ""
+                        echo "  --- $svc trace 原始输出 ---"
+                        echo "$trace_out" | while IFS= read -r line; do
+                            echo "  $line"
+                        done
+                        printf "  %s\n" "──────────────────────────────────────────────────────"
+                    else
+                        warn "  $svc: 无法访问 $trace_url"
+                    fi
+                done
+                ok "检测完成"
+                ;;
+            8)
                 clean_current_env
                 show_current_config
                 ;;

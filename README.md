@@ -43,16 +43,10 @@ python3 setup_proxy.py
 
 ## 远程执行（无需下载）
 
-### Windows（PowerShell 5.1+）
+### Windows
 
 ```powershell
 irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1 | iex
-```
-
-### Windows（CMD / 双击 .bat）
-
-```cmd
-curl -sSL -o install_python.bat https://raw.githubusercontent.com/chenzai666/proxy-setup/master/install_python.bat && install_python.bat
 ```
 
 ### macOS / Linux

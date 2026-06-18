@@ -618,16 +618,25 @@ function Test-DNSLeak {
         $okCount++
     }
 
-    # ── 2. 用 Invoke-WebRequest 通过代理发 HTTPS 请求 ──
+    # ── 2. 用 IWR 通过代理发 HTTPS 请求 (PS5.1 兼容版，绕过证书校验) ──
     $ports = Auto-DetectPorts
     $httpPort = $ports[0]
     try {
-        $resp = Invoke-WebRequest -Uri "https://www.google.com" `
-            -Proxy "http://127.0.0.1:$httpPort" `
-            -Method Head `
-            -TimeoutSec 10 `
-            -SkipCertificateCheck `
-            -ErrorAction Stop
+        # PS5.1 没有 -SkipCertificateCheck，用 ServicePointManager 绕过
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        }
+        $iwrParams = @{
+            Uri       = "https://www.google.com"
+            Proxy     = "http://127.0.0.1:$httpPort"
+            Method    = "Head"
+            TimeoutSec = 10
+            ErrorAction = "Stop"
+        }
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            $iwrParams.SkipCertificateCheck = $true
+        }
+        $resp = Invoke-WebRequest @iwrParams
         if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) {
             ok "代理 DNS 解析正常 (IWR → google, 状态码 $($resp.StatusCode))"
             $okCount++

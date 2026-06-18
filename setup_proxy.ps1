@@ -582,119 +582,147 @@ function Restore-SmartDNS {
 function Test-DNSLeak {
     <#
     .SYNOPSIS
-        检测 DNS 是否泄漏 — 检查系统实际使用的 DNS 解析器
+        检测 DNS 是否泄漏 — CDN 域名解析结果对比法
+        核心逻辑: 用系统 DNS 和多个公网 DNS 解析同一 CDN 域名，
+        比较返回 IP 的地理归属，判断 DNS 是否经过代理
     #>
     bold ""
-    bold "  正在检测 DNS 泄漏 ..."
-    Write-Host "  $( '-' * 45 )"
+    bold "  正在检测 DNS 泄漏 (CDN 解析对比)..."
+    Write-Host "  $( '-' * 55 )"
 
+    $TEST_DOMAIN = "google.com"
     $okCount = 0
+    $totalChecks = 2
 
-    # ── 1. nslookup（不指定 DNS 服务器）→ 使用系统 DNS 配置 ──
-    try {
-        $out = nslookup google.com 2>&1
-        $dnsServer = ""
-        foreach ($line in $out) {
-            if ($line -match "Server:\s+(.+)") {
-                $dnsServer = $Matches[1].Trim()
+    # ── helper: 解析 nslookup 输出中的 IP ──
+    function Parse-NSLookupIPs($output) {
+        $ips = @()
+        $inAnswer = $false
+        foreach ($line in $output) {
+            if ($line -match "^Server:" -or $line -match "DNS request timed out") { continue }
+            if ($line -match "^Name:") { $inAnswer = $true; continue }
+            if ($inAnswer) {
+                if ($line -match "Addresses?:\s+(.+)$") {
+                    $parts = $Matches[1] -split ",\s*"
+                    foreach ($p in $parts) {
+                        if ($p.Trim() -notmatch "^127\.") { $ips += $p.Trim() }
+                    }
+                } elseif ($line -match "Address:\s+(\S+)") {
+                    if ($Matches[1] -notmatch "^127\.") { $ips += $Matches[1] }
+                }
             }
         }
-        if ($dnsServer) {
-            if ($dnsServer -in @("127.0.0.1", "localhost", "::1")) {
-                ok "nslookup DNS 服务器 → $dnsServer (代理本地)"
-                $okCount++
-            } elseif ($dnsServer -eq "Unknown" -or $dnsServer -like "UnKnown*") {
-                info "nslookup DNS 服务器 → $dnsServer (查询失败或走代理)"
-                $okCount++
-            } else {
-                warn "nslookup DNS 服务器 → $dnsServer (可能是 ISP/路由器 DNS)"
-            }
-        } else {
-            info "nslookup 无法解析 DNS 服务器（可能被代理拦截）"
-            $okCount++
-        }
-    } catch {
-        info "nslookup 超时（可能被代理拦截）"
-        $okCount++
+        return $ips
     }
 
-    # ── 2. 代理端口 TCP 连通性 + 协议类型嗅探 ──
+    # ── helper: 用指定 DNS 服务器解析域名 ──
+    function Resolve-DNS($domain, $server, $label) {
+        try {
+            $args = @("nslookup", $domain)
+            if ($server) { $args += $server }
+            $out = & nslookup $domain $server 2>&1
+            $ips = Parse-NSLookupIPs $out
+            if ($ips.Count -gt 0) {
+                info "  $($label.PadRight(12)) -> $(($ips[0..([Math]::Min(3, $ips.Count-1))] -join ', '))$(' ...' * ($ips.Count -gt 4))"
+            } else {
+                info "  $($label.PadRight(12)) -> 无解析结果"
+            }
+            return $ips
+        } catch {
+            info "  $($label.PadRight(12)) -> 超时/不可达"
+            return @()
+        }
+    }
+
+    # ── 1. 核心: CDN 域名解析 IP 对比 ──
+    info "解析 $TEST_DOMAIN — 对比系统 DNS vs 公网 DNS 的返回结果 ..."
+    Write-Host ""
+
+    $sys_ips  = @(Resolve-DNS $TEST_DOMAIN "" "系统 DNS")
+    $cf_ips   = @(Resolve-DNS $TEST_DOMAIN "1.1.1.1" "Cloudflare")
+    $gg_ips   = @(Resolve-DNS $TEST_DOMAIN "8.8.8.8" "Google DNS")
+    $ali_ips  = @(Resolve-DNS $TEST_DOMAIN "223.5.5.5" "AliDNS(CN)")
+
+    if ($sys_ips.Count -eq 0) {
+        info "系统 DNS 无法解析 — DNS 查询可能被代理拦截"
+        $okCount++
+    } elseif ($cf_ips.Count -eq 0 -and $ali_ips.Count -eq 0) {
+        info "公网 DNS 均不可达，跳过 IP 对比"
+        $okCount += 0.5
+    } else {
+        $foreign_ips = @($cf_ips) + @($gg_ips) | Select-Object -Unique
+        $china_ips   = @($ali_ips)
+
+        $sys_vs_foreign = ($sys_ips | Where-Object { $foreign_ips -contains $_ }).Count
+        $sys_vs_china   = ($sys_ips | Where-Object { $china_ips -contains $_ }).Count
+
+        Write-Host ""
+        Write-Host "  $( '-' * 55 )"
+        info "系统 DNS 与 境外CDN IP 重合: $sys_vs_foreign"
+        info "系统 DNS 与 国内CDN IP 重合: $sys_vs_china"
+
+        if ($sys_vs_china -gt 0 -and $sys_vs_foreign -eq 0) {
+            warn "DNS 泄漏风险 — 系统 DNS 返回国内 CDN IP，未经代理"
+        } elseif ($sys_vs_foreign -gt 0 -and $sys_vs_china -eq 0) {
+            ok "DNS 安全 — 系统 DNS 返回境外 CDN IP，经过代理"
+            $okCount++
+        } elseif ($sys_vs_foreign -gt 0 -and $sys_vs_china -gt 0) {
+            warn "DNS 部分泄漏 — 同时出现国内和境外 IP"
+            $okCount += 0.5
+        } else {
+            info "系统 DNS 返回独立 IP（可能代理自建 DNS）— 无法判断"
+            $okCount += 0.5
+        }
+    }
+
+    # ── 2. 代理端口检测 ──
     $ports = Auto-DetectPorts
     $httpPort = $ports[0]
     $socksPort = $ports[1]
-    info "代理端口 TCP 连通性检测 ($httpPort / $socksPort) ..."
+    Write-Host ""
+    info "代理端口 TCP 检测 ($httpPort / $socksPort) ..."
 
-    # 2a. 确认 HTTP 代理端口是否响应
-    $httpProxyAlive = $false
-    try {
-        $tcp = New-Object System.Net.Sockets.TcpClient
-        if ($tcp.ConnectAsync("127.0.0.1", $httpPort).Wait(3000)) {
-            $tcp.Close()
-            $httpProxyAlive = $true
-        }
-    } catch {}
+    $httpAlive = $false; $socksAlive = $false
+    try { $tcp = New-Object Net.Sockets.TcpClient; if ($tcp.ConnectAsync("127.0.0.1", $httpPort).Wait(3000)) { $httpAlive = $true }; $tcp.Close() } catch {}
+    try { $tcp = New-Object Net.Sockets.TcpClient; if ($tcp.ConnectAsync("127.0.0.1", $socksPort).Wait(3000)) { $socksAlive = $true }; $tcp.Close() } catch {}
 
-    # 2b. 确认 SOCKS5 端口是否响应
-    $socksAlive = $false
-    try {
-        $tcp = New-Object System.Net.Sockets.TcpClient
-        if ($tcp.ConnectAsync("127.0.0.1", $socksPort).Wait(3000)) {
-            $tcp.Close()
-            $socksAlive = $true
-        }
-    } catch {}
-
-    # 2c. 尝试通过代理解析 DNS（自动适配 HTTP / SOCKS5）
-    if ($httpProxyAlive) {
+    if ($httpAlive) {
         try {
-            # PS5.1 兼容：WebClient + HTTP 代理
-            $wc = New-Object System.Net.WebClient
-            $wc.Proxy = New-Object System.Net.WebProxy("http://127.0.0.1:$httpPort", $true)
+            $wc = New-Object Net.WebClient
+            $wc.Proxy = New-Object Net.WebProxy("http://127.0.0.1:$httpPort", $true)
             if ($PSVersionTable.PSVersion.Major -lt 6) {
-                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+                [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
             }
             $wc.Headers.Add("User-Agent", "proxy-setup-dns-check")
             $result = $wc.DownloadString("https://www.google.com")
             if ($result -and $result.Length -gt 100) {
-                ok "代理 HTTP 连通性正常 (WebClient → google, 响应 $($result.Length) bytes)"
+                ok "代理 HTTP 连通正常 (google, $($result.Length) bytes)"
                 $okCount++
             } else {
                 warn "代理 HTTP 响应异常"
             }
             $wc.Dispose()
         } catch {
-            warn "代理 HTTP 连通性失败: $_"
+            warn "代理 HTTP 不通: $_"
         }
     } elseif ($socksAlive) {
-        ok "代理 SOCKS5 端口活跃 ($socksPort) — 代理正常运行"
-        $okCount++
+        ok "代理 SOCKS5 活跃 ($socksPort) — 但不能用于 HTTP 代理检测"
+        $okCount += 0.5
     } else {
-        warn "代理端口均未响应 — 请确认代理客户端是否运行"
+        warn "代理端口未响应 — 请确认代理客户端已启动"
     }
-
-    # ── 3. 辅助: 直连 8.8.8.8 ──
-    info "辅助检测: 直连公网 DNS 8.8.8.8 ..."
-    try {
-        $out8 = nslookup google.com 8.8.8.8 2>&1
-        if ($LASTEXITCODE -eq 0 -and ($out8 -join "`n") -match "Address") {
-            info "8.8.8.8 可达（UDP 53 未被防火墙拦截，但不等于 DNS 泄漏）"
-        } else {
-            ok "8.8.8.8 不可达 — 防火墙已拦截直连 DNS"
-            $okCount++
-        }
-    } catch {}
 
     # ── 汇总 ──
     Write-Host ""
-    Write-Host "  $( '-' * 45 )"
+    Write-Host "  $( '-' * 55 )"
     if ($okCount -ge 2) {
-        ok "DNS 泄漏检测通过 ($okCount/3 项正常)"
-    } elseif ($okCount -eq 1) {
-        warn "DNS 存在可疑 ($okCount/3 项正常) — 建议检查代理客户端 DNS 设置"
+        ok "DNS 泄漏检测通过 ($okCount/$totalChecks)"
+    } elseif ($okCount -ge 1) {
+        warn "DNS 存在可疑 ($okCount/$totalChecks) — 建议用浏览器访问 dnsleaktest.com 复检"
     } else {
-        warn "DNS 泄漏风险较高 — 建议检查代理客户端 DNS 设置"
+        warn "DNS 泄漏风险较高 — 建议检查代理客户端设置"
     }
-    info "提示: 代理客户端 (v2rayN/Clash) 需确认 `"系统代理`" 和 `"DNS 设置`" 已开启"
+    info "手动验证: 浏览器打开 https://dnsleaktest.com 查看实际 DNS 解析服务器"
 }
 
 function Show-SmartDNSMenu {

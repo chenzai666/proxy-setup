@@ -875,123 +875,163 @@ def restore_smart_dns():
     ok("已恢复默认 DNS 行为")
 
 
-def check_dns_leak():
-    """检测 DNS 是否泄漏 — 检查系统实际使用的 DNS 解析器"""
-    bold("\n  正在检测 DNS 泄漏 ...")
-    print(f"  {'─' * 45}")
+def _parse_nslookup_ips(output: str) -> list[str]:
+    """从 nslookup 输出中提取非权威 IP 地址列表"""
+    ips = []
+    in_answer = False
+    for line in output.splitlines():
+        # 跳过 header 中的地址
+        if "Server:" in line or "DNS request timed out" in line:
+            continue
+        if "Name:" in line:
+            in_answer = True
+            continue
+        if in_answer:
+            m = re.search(r"Addresses?:\s*(.+)", line)
+            if not m:
+                m = re.search(r"Address:\s*(\S+)", line)
+            if m:
+                for ip in m.group(1).split(","):
+                    ip = ip.strip()
+                    if ip and not ip.startswith("127."):
+                        ips.append(ip)
+    return ips
 
-    findings = []
-    ok_count = 0
 
-    # ── 1. nslookup（不指定 DNS 服务器）→ 使用系统 DNS 配置 ──
-    try:
-        r = subprocess.run(
-            ["nslookup", "google.com"],
-            capture_output=True, text=True, timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-        )
-        dns_server = ""
-        for line in r.stdout.splitlines():
-            if "Server:" in line:
-                dns_server = line.split(":")[-1].strip()
-            if "Address:" in line and not dns_server:
-                dns_server = line.split(":")[-1].strip()
-
-        if dns_server:
-            findings.append(f"系统 DNS 解析器: {dns_server}")
-            if dns_server in ("127.0.0.1", "localhost", "::1"):
-                ok(f"nslookup DNS 服务器 → {dns_server} (代理本地) ✓")
-                ok_count += 1
-            elif dns_server == "Unknown" or dns_server.startswith("UnKnown"):
-                # UnKnown 可能意味着 DNS 查询失败，可能是好事
-                info(f"nslookup DNS 服务器 → {dns_server} (查询失败或走代理)")
-                ok_count += 1
-            else:
-                warn(f"nslookup DNS 服务器 → {dns_server} (可能是 ISP/路由器 DNS)")
-        else:
-            info("nslookup 无法解析 DNS 服务器（可能被代理拦截）")
-            ok_count += 1
-    except subprocess.TimeoutExpired:
-        info("nslookup 超时（可能被代理拦截）")
-        ok_count += 1
-    except Exception:
-        pass
-
-    # ── 2. 代理端口 TCP 连通性 + 协议类型嗅探 ──
-    http_port, socks_port = auto_detect_ports()
-    import urllib.request
-    import ssl
-    import socket as _socket
-
-    info(f"代理端口 TCP 连通性检测 ({http_port} / {socks_port}) ...")
-
-    # 2a. TCP 端口检测
-    http_port_alive = False
-    socks_port_alive = False
-    try:
-        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        s.settimeout(3)
-        if s.connect_ex(("127.0.0.1", http_port)) == 0:
-            http_port_alive = True
-        s.close()
-    except Exception:
-        pass
-    try:
-        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        s.settimeout(3)
-        if s.connect_ex(("127.0.0.1", socks_port)) == 0:
-            socks_port_alive = True
-        s.close()
-    except Exception:
-        pass
-
-    # 2b. HTTP 代理连通性检测
-    if http_port_alive:
+def _nslookup_all(domain: str, servers: list[tuple[str, str]]):
+    """对同一域名用多个 DNS 服务器解析，返回 {label: ip_list}"""
+    results = {}
+    for label, server in servers:
         try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            proxy_handler = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{http_port}", "https": f"http://127.0.0.1:{http_port}"})
-            opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
+            cmd = ["nslookup", domain]
+            if server:
+                cmd.append(server)
+            r = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            ips = _parse_nslookup_ips(r.stdout)
+            results[label] = ips
+            if ips:
+                info(f"  {label:<12} → {', '.join(ips[:4])}{' ...' if len(ips) > 4 else ''}")
+            else:
+                info(f"  {label:<12} → 无解析结果")
+        except Exception:
+            results[label] = []
+            info(f"  {label:<12} → 超时/不可达")
+    return results
+
+
+def check_dns_leak():
+    """检测 DNS 是否泄漏 — CDN 域名解析结果对比法"""
+    bold("\n  正在检测 DNS 泄漏 (CDN 解析对比)...")
+    print(f"  {'─' * 55}")
+
+    TEST_DOMAIN = "google.com"
+    # (标签, DNS服务器)  — server 为空表示用系统 DNS
+    servers = [
+        ("系统 DNS",    ""),           # 系统当前 DNS
+        ("Cloudflare",  "1.1.1.1"),    # 境外参考
+        ("Google DNS",  "8.8.8.8"),    # 境外参考
+        ("AliDNS(CN)",  "223.5.5.5"),  # 国内参考
+    ]
+
+    ok_count = 0
+    total_checks = 0
+
+    # ── 1. 核心: DNS 解析 IP 对比 ──
+    info(f"解析 {TEST_DOMAIN} — 对比系统 DNS vs 公网 DNS 的返回结果 ...")
+    print()
+    results = _nslookup_all(TEST_DOMAIN, servers)
+    total_checks += 1
+
+    sys_ips = set(results.get("系统 DNS", []))
+    cf_ips  = set(results.get("Cloudflare", []))
+    gg_ips  = set(results.get("Google DNS", []))
+    ali_ips = set(results.get("AliDNS(CN)", []))
+
+    if not sys_ips:
+        # 系统 DNS 失败 → DNS 可能被代理拦截
+        info("系统 DNS 无法解析 — DNS 查询可能被代理拦截 ✓")
+        ok_count += 1
+    elif not ali_ips and not cf_ips:
+        # 所有公网 DNS 都失败 → 网络环境特殊，跳过对比
+        info("公网 DNS 均不可达，跳过 IP 对比")
+        ok_count += 0.5
+    else:
+        # 境外 IP 集合 = Cloudflare + Google 的并集
+        foreign_ips = cf_ips | gg_ips
+        # 国内 IP 集合 = AliDNS
+        china_ips = ali_ips
+
+        sys_vs_foreign = len(sys_ips & foreign_ips) if foreign_ips else 0
+        sys_vs_china   = len(sys_ips & china_ips) if china_ips else 0
+
+        print(f"\n  {'─' * 55}")
+        info(f"系统 DNS 与 境外CDN IP 重合: {sys_vs_foreign}")
+        info(f"系统 DNS 与 国内CDN IP 重合: {sys_vs_china}")
+
+        if sys_vs_china > 0 and sys_vs_foreign == 0:
+            warn("DNS 泄漏风险 — 系统 DNS 返回国内 CDN IP，未经代理")
+        elif sys_vs_foreign > 0 and sys_vs_china == 0:
+            ok("DNS 安全 — 系统 DNS 返回境外 CDN IP，经过代理 ✓")
+            ok_count += 1
+        elif sys_vs_foreign > 0 and sys_vs_china > 0:
+            # 双栈环境，部分泄漏
+            warn("DNS 部分泄漏 — 同时出现国内和境外 IP")
+            ok_count += 0.5
+        else:
+            # IP 都不重合 — 代理可能用了独立 DNS
+            info("系统 DNS 返回独立 IP（可能代理自建 DNS）— 无法判断")
+            ok_count += 0.5
+
+    # ── 2. 代理端口 + HTTP 连通性 ──
+    http_port, socks_port = auto_detect_ports()
+    import urllib.request, ssl, socket as _socket
+
+    info(f"\n代理端口 TCP 检测 ({http_port} / {socks_port}) ...")
+    total_checks += 1
+
+    http_alive = False
+    socks_alive = False
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM); s.settimeout(3)
+        if s.connect_ex(("127.0.0.1", http_port)) == 0: http_alive = True
+        s.close()
+    except Exception: pass
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM); s.settimeout(3)
+        if s.connect_ex(("127.0.0.1", socks_port)) == 0: socks_alive = True
+        s.close()
+    except Exception: pass
+
+    if http_alive:
+        try:
+            ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+            ph = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{http_port}", "https": f"http://127.0.0.1:{http_port}"})
+            opener = urllib.request.build_opener(ph, urllib.request.HTTPSHandler(context=ctx))
             req = urllib.request.Request("https://www.google.com", method="HEAD")
             resp = opener.open(req, timeout=10)
-            ok(f"代理 HTTP 连通性正常 (urllib → google, 状态码 {resp.status})")
+            ok(f"代理 HTTP 连通正常 (google, {resp.status}) ✓")
             ok_count += 1
         except Exception as e:
-            warn(f"代理 HTTP 连通性失败: {e}")
-            info("可能原因: 端口为 SOCKS5 协议 / 节点不通 / 需要认证")
-    elif socks_port_alive:
-        ok(f"代理 SOCKS5 端口活跃 ({socks_port}) — 代理正常运行")
-        ok_count += 1
+            warn(f"代理 HTTP 不通: {e}")
+    elif socks_alive:
+        ok(f"代理 SOCKS5 活跃 ({socks_port}) — 但不能用于 HTTP 代理检测")
+        ok_count += 0.5
     else:
-        warn("代理端口均未响应 — 请确认代理客户端是否运行")
-
-    # ── 3. 试一下直连 8.8.8.8 是否有响应（辅助判断） ──
-    info("辅助检测: 直连公网 DNS 8.8.8.8 ...")
-    try:
-        r = subprocess.run(
-            ["nslookup", "google.com", "8.8.8.8"],
-            capture_output=True, text=True, timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-        )
-        if r.returncode == 0 and "Address" in r.stdout:
-            info("8.8.8.8 可达（UDP 53 未被防火墙拦截，但不等于 DNS 泄漏）")
-        else:
-            ok("8.8.8.8 不可达 — 防火墙已拦截直连 DNS ✓")
-            ok_count += 1
-    except Exception:
-        pass
+        warn("代理端口未响应 — 请确认代理客户端已启动")
 
     # ── 汇总 ──
-    print(f"\n  {'─' * 45}")
+    print(f"\n  {'─' * 55}")
     if ok_count >= 2:
-        ok(f"DNS 泄漏检测通过 ({ok_count}/3 项正常)")
-    elif ok_count == 1:
-        warn(f"DNS 存在可疑 ({ok_count}/3 项正常) — 建议检查代理客户端 DNS 设置")
+        ok(f"DNS 泄漏检测通过 ({ok_count}/{total_checks}) ✓")
+    elif ok_count >= 1:
+        warn(f"DNS 存在可疑 ({ok_count}/{total_checks}) — 建议用浏览器访问 dnsleaktest.com 复检")
     else:
-        warn("DNS 泄漏风险较高 — 建议检查代理客户端 DNS 设置")
+        warn("DNS 泄漏风险较高 — 建议检查代理客户端设置")
 
-    info("提示: 代理客户端 (v2rayN/Clash) 需确认 '系统代理' 和 'DNS 设置' 已开启")
+    info("手动验证: 浏览器打开 https://dnsleaktest.com 查看实际 DNS 解析服务器")
 
 
 def smart_dns_menu():

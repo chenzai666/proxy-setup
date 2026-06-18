@@ -725,7 +725,6 @@ function Test-DNSLeak {
     info "手动验证网站:"
     info "  • https://dnsleaktest.com   — DNS 泄漏检测"
     info "  • https://ipleak.net        — 全量泄漏检测 (IP/WebRTC/DNS)"
-    info "  • https://ipleak.org        — 同上，备用"
     info "  • https://browserleaks.com/dns — 详细 DNS 请求分析"
 }
 

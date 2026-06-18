@@ -582,44 +582,82 @@ function Restore-SmartDNS {
 function Test-DNSLeak {
     <#
     .SYNOPSIS
-        检测 DNS 是否泄漏 — 通过 nslookup 直接查询公网 DNS 服务器
+        检测 DNS 是否泄漏 — 检查系统实际使用的 DNS 解析器
     #>
-    $targets = @(
-        @{Server="8.8.8.8";        Name="Google"},
-        @{Server="1.1.1.1";        Name="Cloudflare"},
-        @{Server="9.9.9.9";        Name="Quad9"},
-        @{Server="208.67.222.222"; Name="OpenDNS"}
-    )
+    bold ""
+    bold "  正在检测 DNS 泄漏 ..."
+    Write-Host "  $( '-' * 45 )"
 
-    info "正在检测 DNS 泄漏 (nslookup → 公网 DNS)..."
-    $results = @()
+    $okCount = 0
 
-    foreach ($t in $targets) {
-        try {
-            $out = nslookup google.com $t.Server 2>&1
-            if ($LASTEXITCODE -eq 0 -and $out -match "Address") {
-                $results += $t
+    # ── 1. nslookup（不指定 DNS 服务器）→ 使用系统 DNS 配置 ──
+    try {
+        $out = nslookup google.com 2>&1
+        $dnsServer = ""
+        foreach ($line in $out) {
+            if ($line -match "Server:\s+(.+)") {
+                $dnsServer = $Matches[1].Trim()
             }
-        } catch {}
+        }
+        if ($dnsServer) {
+            if ($dnsServer -in @("127.0.0.1", "localhost", "::1")) {
+                ok "nslookup DNS 服务器 → $dnsServer (代理本地)"
+                $okCount++
+            } elseif ($dnsServer -eq "Unknown" -or $dnsServer -like "UnKnown*") {
+                info "nslookup DNS 服务器 → $dnsServer (查询失败或走代理)"
+                $okCount++
+            } else {
+                warn "nslookup DNS 服务器 → $dnsServer (可能是 ISP/路由器 DNS)"
+            }
+        } else {
+            info "nslookup 无法解析 DNS 服务器（可能被代理拦截）"
+            $okCount++
+        }
+    } catch {
+        info "nslookup 超时（可能被代理拦截）"
+        $okCount++
     }
 
+    # ── 2. 用 curl 通过代理验证 DNS 解析 ──
+    $ports = Auto-DetectPorts
+    $httpPort = $ports[0]
+    try {
+        $curlOut = & curl -s -o NUL -w "%{http_code}" --proxy "http://127.0.0.1:$httpPort" `
+            "https://www.google.com" --connect-timeout 8 --max-time 10 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0 -and $curlOut -match "^(200|301|302|307|308)$") {
+            ok "代理 DNS 解析正常 (curl → google, 状态码 $curlOut)"
+            $okCount++
+        } else {
+            warn "代理 DNS 解析异常 (curl → google, 状态码 $curlOut)"
+        }
+    } catch {
+        info "跳过 curl 检测（无 curl 或代理不通）"
+    }
+
+    # ── 3. 辅助: 直连 8.8.8.8 ──
+    info "辅助检测: 直连公网 DNS 8.8.8.8 ..."
+    try {
+        $out8 = nslookup google.com 8.8.8.8 2>&1
+        if ($LASTEXITCODE -eq 0 -and ($out8 -join "`n") -match "Address") {
+            info "8.8.8.8 可达（UDP 53 未被防火墙拦截，但不等于 DNS 泄漏）"
+        } else {
+            ok "8.8.8.8 不可达 — 防火墙已拦截直连 DNS"
+            $okCount++
+        }
+    } catch {}
+
+    # ── 汇总 ──
     Write-Host ""
-    $count = $results.Count
-    if ($count -ge 3) {
-        warn "检测到 $count/4 个 DNS 服务器可达 — DNS 严重泄漏！"
-    } elseif ($count -ge 1) {
-        warn "检测到 $count/4 个 DNS 服务器可达 — 可能存在 DNS 泄漏"
+    Write-Host "  $( '-' * 45 )"
+    if ($okCount -ge 2) {
+        ok "DNS 泄漏检测通过 ($okCount/3 项正常)"
+    } elseif ($okCount -eq 1) {
+        warn "DNS 存在可疑 ($okCount/3 项正常) — 建议检查代理客户端 DNS 设置"
     } else {
-        ok "未检测到 DNS 泄漏 (0/4 可达) — 代理工作正常"
+        warn "DNS 泄漏风险较高 — 建议检查代理客户端 DNS 设置"
     }
-
-    foreach ($t in $results) {
-        Write-Host "    ⚠ $($t.Name) ($($t.Server)) 可达 — DNS 查询绕过了代理"
-    }
-
-    if ($count -gt 0) {
-        info "建议: 返回菜单 → 选项 4 一键禁用推荐项 (前两项策略键)"
-    }
+    info "提示: 代理客户端 (v2rayN/Clash) 需确认 `"系统代理`" 和 `"DNS 设置`" 已开启"
 }
 
 function Show-SmartDNSMenu {

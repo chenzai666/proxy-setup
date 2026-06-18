@@ -876,43 +876,93 @@ def restore_smart_dns():
 
 
 def check_dns_leak():
-    """检测 DNS 是否泄漏 — 通过 nslookup 直接查询公网 DNS 服务器"""
-    targets = [
-        ("8.8.8.8",        "Google"),
-        ("1.1.1.1",        "Cloudflare"),
-        ("9.9.9.9",        "Quad9"),
-        ("208.67.222.222", "OpenDNS"),
-    ]
+    """检测 DNS 是否泄漏 — 检查系统实际使用的 DNS 解析器"""
+    bold("\n  正在检测 DNS 泄漏 ...")
+    print(f"  {'─' * 45}")
 
-    info("正在检测 DNS 泄漏 (nslookup → 公网 DNS)...")
-    results = []
+    findings = []
+    ok_count = 0
 
-    for server, name in targets:
-        try:
-            r = subprocess.run(
-                ["nslookup", "google.com", server],
-                capture_output=True, text=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            if r.returncode == 0 and "Address" in r.stdout:
-                results.append((name, server))
-        except Exception:
-            pass
+    # ── 1. nslookup（不指定 DNS 服务器）→ 使用系统 DNS 配置 ──
+    try:
+        r = subprocess.run(
+            ["nslookup", "google.com"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        dns_server = ""
+        for line in r.stdout.splitlines():
+            if "Server:" in line:
+                dns_server = line.split(":")[-1].strip()
+            if "Address:" in line and not dns_server:
+                dns_server = line.split(":")[-1].strip()
 
-    print()
-    leak_count = len(results)
-    if leak_count >= 3:
-        warn(f"检测到 {leak_count}/4 个 DNS 服务器可达 — DNS 严重泄漏！")
-    elif leak_count >= 1:
-        warn(f"检测到 {leak_count}/4 个 DNS 服务器可达 — 可能存在 DNS 泄漏")
+        if dns_server:
+            findings.append(f"系统 DNS 解析器: {dns_server}")
+            if dns_server in ("127.0.0.1", "localhost", "::1"):
+                ok(f"nslookup DNS 服务器 → {dns_server} (代理本地) ✓")
+                ok_count += 1
+            elif dns_server == "Unknown" or dns_server.startswith("UnKnown"):
+                # UnKnown 可能意味着 DNS 查询失败，可能是好事
+                info(f"nslookup DNS 服务器 → {dns_server} (查询失败或走代理)")
+                ok_count += 1
+            else:
+                warn(f"nslookup DNS 服务器 → {dns_server} (可能是 ISP/路由器 DNS)")
+        else:
+            info("nslookup 无法解析 DNS 服务器（可能被代理拦截）")
+            ok_count += 1
+    except subprocess.TimeoutExpired:
+        info("nslookup 超时（可能被代理拦截）")
+        ok_count += 1
+    except Exception:
+        pass
+
+    # ── 2. 用 curl 通过代理解析域名，验证代理 DNS 可用 ──
+    http_port, _ = auto_detect_ports()
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-o", "NUL", "-w", "%{http_code}",
+             "--proxy", f"http://127.0.0.1:{http_port}",
+             "https://www.google.com",
+             "--connect-timeout", "8", "--max-time", "10"],
+            capture_output=True, text=True, timeout=12,
+            shell=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        if r.returncode == 0 and r.stdout.strip() in ("200", "301", "302", "307", "308"):
+            ok(f"代理 DNS 解析正常 (curl → google, 状态码 {r.stdout.strip()})")
+            ok_count += 1
+        else:
+            warn(f"代理 DNS 解析异常 (curl → google, 状态码 {r.stdout.strip()})")
+    except Exception:
+        info("跳过 curl 检测（无 curl 或代理不通）")
+
+    # ── 3. 试一下直连 8.8.8.8 是否有响应（辅助判断） ──
+    info("辅助检测: 直连公网 DNS 8.8.8.8 ...")
+    try:
+        r = subprocess.run(
+            ["nslookup", "google.com", "8.8.8.8"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        if r.returncode == 0 and "Address" in r.stdout:
+            info("8.8.8.8 可达（UDP 53 未被防火墙拦截，但不等于 DNS 泄漏）")
+        else:
+            ok("8.8.8.8 不可达 — 防火墙已拦截直连 DNS ✓")
+            ok_count += 1
+    except Exception:
+        pass
+
+    # ── 汇总 ──
+    print(f"\n  {'─' * 45}")
+    if ok_count >= 2:
+        ok(f"DNS 泄漏检测通过 ({ok_count}/3 项正常)")
+    elif ok_count == 1:
+        warn(f"DNS 存在可疑 ({ok_count}/3 项正常) — 建议检查代理客户端 DNS 设置")
     else:
-        ok("未检测到 DNS 泄漏 (0/4 可达) — 代理工作正常")
+        warn("DNS 泄漏风险较高 — 建议检查代理客户端 DNS 设置")
 
-    for name, server in results:
-        print(f"    ⚠ {name} ({server}) 可达 — DNS 查询绕过了代理")
-
-    if leak_count > 0:
-        info("建议: 返回菜单 → 选项 4 一键禁用推荐项 (前两项策略键)")
+    info("提示: 代理客户端 (v2rayN/Clash) 需确认 '系统代理' 和 'DNS 设置' 已开启")
 
 
 def smart_dns_menu():

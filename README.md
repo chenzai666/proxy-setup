@@ -51,12 +51,15 @@ python3 setup_proxy.py
 $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
 ```
 
-> `WebClient` + `iex` 在内存执行，无 BOM/编码问题，且能避开 `irm` 的 CDN 缓存问题。
->
-> 如果 GitHub 不通，用国内镜像：
-> ```powershell
-> $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://gh-proxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
-> ```
+> `WebClient` + `iex` 在内存执行，无 BOM/编码问题。
+
+**Windows 加速版（jsdelivr CDN，国内更快）：**
+
+```powershell
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@cd1afa6/setup_proxy.ps1'))
+```
+
+> URL 含 commit hash `@cd1afa6` 锁定版本，彻底避开 CDN 缓存旧文件的问题。
 
 **Mac / Linux:**
 

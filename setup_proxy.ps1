@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Windows 终端代理一键配置（纯 PowerShell，无需 Python）
     支持 v2rayN / Clash / sing-box
@@ -302,35 +302,7 @@ function Invoke-CurlTest($http_port, $url) {
     }
 }
 
-function Get-CfTraceIP($http_port, $trace_url) {
-    $proxy = "http://${PROXY_HOST}:${http_port}"
-    try {
-        $r = curl.exe -s --proxy $proxy --connect-timeout 8 --max-time 12 $trace_url 2>&1
-        if ($r -and $r -match '=') {
-            $trace = @{}
-            foreach ($line in ($r -split "\r?\n")) {
-                if ($line -match '^([^=]+)=(.*)$') {
-                    $trace[$Matches[1]] = $Matches[2]
-                }
-            }
-            return @{
-                ip   = $trace["ip"]
-                colo = $trace["colo"]
-                warp = $trace["warp"]
-                raw  = $r
-            }
-        }
-    } catch {}
-    return @{ ip=""; colo=""; warp="off"; raw="" }
-}
-
 function Get-ExitIP($http_port) {
-    # 优先用 Cloudflare trace（更准确）
-    $claude = Get-CfTraceIP $http_port "https://claude.ai/cdn-cgi/trace"
-    if ($claude.ip) { return @($claude.ip, "Claude: colo=$($claude.colo)") }
-    $openai = Get-CfTraceIP $http_port "https://chat.openai.com/cdn-cgi/trace"
-    if ($openai.ip) { return @($openai.ip, "OpenAI: colo=$($openai.colo)") }
-    # 兜底：ip-api.com
     $proxy = "http://${PROXY_HOST}:${http_port}"
 
     try {
@@ -399,22 +371,10 @@ function Test-FullConnectivity($http_port) {
         warn "部分 API 不通，检查对应目标是否被节点屏蔽"
     }
 
-    # 用 Cloudflare trace 检测出口 IP（Claude + OpenAI）
-    Write-Host "  $( '-' * 45 )"
-    bold "  出口 IP 检测（通过 Cloudflare trace）:"
-    foreach ($item in @(
-        @{ svc = "Claude"; url = "https://claude.ai/cdn-cgi/trace" },
-        @{ svc = "OpenAI"; url = "https://chat.openai.com/cdn-cgi/trace" }
-    )) {
-        $result = Get-CfTraceIP $http_port $item.url
-        if ($result.ip) {
-            $parts = @("$($item.svc): $($result.ip)")
-            if ($result.colo) { $parts += "接入: $($result.colo)" }
-            if ($result.warp -and $result.warp -ne "off") { $parts += "WARP: $($result.warp)" }
-            ok ($parts -join " | ")
-        } else {
-            warn "  $($item.svc): 无法获取（代理可能未连外网）"
-        }
+    $ip, $region = Get-ExitIP $http_port
+    if ($ip) {
+        if ($region) { ok "出口 IP: $ip  ($region)" }
+        else { ok "出口 IP: $ip" }
     }
 }
 
@@ -499,6 +459,209 @@ function Set-EnvCurrentSession($http_port, $socks5_port) {
     ok "当前会话环境变量已设置（仅本终端有效）"
 }
 
+# ---- Windows 智能DNS 禁用 ----
+
+$SMART_DNS_REGS = @(
+    @{
+        Key   = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
+        Name  = "DisableSmartNameResolution"
+        Value = 1
+        Desc  = "智能多宿主 DNS 解析"
+    },
+    @{
+        Key   = "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
+        Name  = "DisableParallelAandAAAA"
+        Value = 1
+        Desc  = "并行 A/AAAA 查询"
+    },
+    @{
+        Key   = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
+        Name  = "EnableMulticast"
+        Value = 0
+        Desc  = "mDNS/LLMNR 组播"
+    }
+)
+
+function Check-SmartDNSStatus {
+    $results = @()
+    foreach ($reg in $SMART_DNS_REGS) {
+        try {
+            $current = Get-ItemProperty -Path $reg.Key -Name $reg.Name -ErrorAction Stop
+            $val = $current.$($reg.Name)
+            $isDisabled = ($val -eq $reg.Value)
+            $results += @{
+                Desc       = $reg.Desc
+                Current    = $val
+                Target     = $reg.Value
+                IsDisabled = $isDisabled
+            }
+        } catch {
+            $results += @{
+                Desc       = $reg.Desc
+                Current    = -1
+                Target     = $reg.Value
+                IsDisabled = $false
+            }
+        }
+    }
+    return $results
+}
+
+function Toggle-SmartDNSSingle($key, $name, $value, $enable) {
+    <#
+    .SYNOPSIS
+        切换单个智能DNS 注册表项
+    #>
+    if ($enable) {
+        try {
+            if (-not (Test-Path $key)) {
+                New-Item -Path $key -Force | Out-Null
+            }
+            Set-ItemProperty -Path $key -Name $name -Value $value -Type DWord -Force
+            ok "$name = $value"
+        } catch {
+            warn "设置失败（可能需要管理员权限）: $_"
+        }
+    } else {
+        try {
+            Remove-ItemProperty -Path $key -Name $name -Force -ErrorAction Stop
+            ok "$name 已恢复系统默认"
+        } catch {
+            warn "恢复失败（可能需要管理员权限）: $_"
+        }
+    }
+}
+
+function Disable-SmartDNS {
+    bold ""
+    bold "  禁用 Windows 智能DNS ..."
+    Write-Host "  $( '-' * 45 )"
+
+    $allOk = $true
+    foreach ($reg in $SMART_DNS_REGS) {
+        info "正在设置 $($reg.Name) = $($reg.Value) ..."
+        try {
+            if (-not (Test-Path $reg.Key)) {
+                New-Item -Path $reg.Key -Force | Out-Null
+            }
+            Set-ItemProperty -Path $reg.Key -Name $reg.Name -Value $reg.Value -Type DWord -Force
+            ok "$($reg.Name) = $($reg.Value)"
+        } catch {
+            warn "设置失败（可能需要管理员权限）: $_"
+            $allOk = $false
+        }
+    }
+
+    if ($allOk) {
+        ok "Windows 智能DNS 已禁用"
+        Write-Host "  $( '-' * 45 )"
+        info "效果: DNS 查询不再向所有网卡广播，避免代理环境 DNS 泄漏"
+        info "恢复方法: 重新运行本脚本 -> 选项 7 -> 恢复"
+    } else {
+        warn "部分设置失败，请以管理员身份运行后重试"
+    }
+}
+
+function Restore-SmartDNS {
+    bold ""
+    bold "  恢复 Windows 智能DNS 默认设置 ..."
+    Write-Host "  $( '-' * 45 )"
+
+    foreach ($reg in $SMART_DNS_REGS) {
+        info "正在恢复 $($reg.Name) ..."
+        try {
+            Remove-ItemProperty -Path $reg.Key -Name $reg.Name -Force -ErrorAction Stop
+            ok "$($reg.Name) 已恢复系统默认"
+        } catch {
+            ok "$($reg.Name) 已是系统默认"
+        }
+    }
+    ok "已恢复默认 DNS 行为"
+}
+
+function Show-SmartDNSMenu {
+    <#
+    .SYNOPSIS
+        智能DNS 管理子菜单（独立切换每项）
+    #>
+    bold ""
+    bold "===  Windows 智能DNS 管理 ==="
+
+    $keyLabels = @(
+        @{Label="智能多宿主 DNS 解析"; Idx=0},
+        @{Label="并行 A/AAAA 查询";    Idx=1},
+        @{Label="mDNS/LLMNR 组播";     Idx=2}
+    )
+
+    while ($true) {
+        $status = Check-SmartDNSStatus
+
+        Write-Host ""
+        Write-Host "  当前状态:"
+        Write-Host "  $( '-' * 52 )"
+        foreach ($s in $status) {
+            if ($s.Current -ge 0) {
+                if ($s.IsDisabled) {
+                    Write-Host ("  {0,-22} 当前={1}  目标={2}  " -f $s.Desc, $s.Current, $s.Target) -NoNewline
+                    Write-Host "已禁用" -ForegroundColor Green
+                } else {
+                    Write-Host ("  {0,-22} 当前={1}  目标={2}  " -f $s.Desc, $s.Current, $s.Target) -NoNewline
+                    Write-Host "未禁用" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host ("  {0,-22} 未配置（系统默认）" -f $s.Desc)
+            }
+        }
+        Write-Host "  $( '-' * 52 )"
+
+        # 逐项开关
+        for ($i = 0; $i -lt $keyLabels.Count; $i++) {
+            $idx = $keyLabels[$i].Idx
+            $label = $keyLabels[$i].Label
+            $s = $status[$idx]
+            $action = if ($s.IsDisabled) { "恢复" } else { "禁用" }
+            $tag = if ($idx -eq 2) { "（⚠ 影响内网 .local / 打印机发现）" } else { "" }
+            Write-Host "  $($i+1)) $action $label$tag"
+        }
+
+        # 快捷操作
+        Write-Host "  4) 一键禁用推荐项 (前两项，保留组播)"
+        Write-Host "  5) 全部恢复默认"
+        Write-Host "  0) 返回主菜单"
+
+        $choice = Read-Host "请选择 [0-5]"
+        switch ($choice) {
+            "0" { return }
+            "1" {
+                $reg = $SMART_DNS_REGS[0]
+                $enable = -not $status[0].IsDisabled
+                Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
+            }
+            "2" {
+                $reg = $SMART_DNS_REGS[1]
+                $enable = -not $status[1].IsDisabled
+                Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
+            }
+            "3" {
+                $reg = $SMART_DNS_REGS[2]
+                $enable = -not $status[2].IsDisabled
+                Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
+            }
+            "4" {
+                for ($i = 0; $i -lt 2; $i++) {
+                    if (-not $status[$i].IsDisabled) {
+                        $reg = $SMART_DNS_REGS[$i]
+                        Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $true
+                    }
+                }
+                ok "推荐项已禁用 (前两项)"
+            }
+            "5" { Restore-SmartDNS }
+            default { warn "无效选项" }
+        }
+    }
+}
+
 # ---- 菜单 ----
 
 function Show-Menu {
@@ -510,7 +673,7 @@ function Show-Menu {
     Write-Host "  4) 验证当前代理连通性"
     Write-Host "  5) 全链路测试 (OpenAI + Anthropic)"
     Write-Host "  6) 查看当前代理配置"
-    Write-Host "  7) 检测出口 IP (Claude + OpenAI cf-trace)"
+    Write-Host "  7) 禁用 Windows 智能DNS"
     Write-Host "  0) 退出"
     Write-Host ""
 }
@@ -519,7 +682,7 @@ function Show-Menu {
 
 function Main {
     $rc = Get-ProfilePath
-    info "代理配置将写入: $rc"
+    info "配置文件: $rc"
 
     while ($true) {
         Show-Menu
@@ -541,7 +704,7 @@ function Main {
                 Configure-Npm $hp
 
                 Write-Host "  是否同时配置 git 代理？[y/N] " -NoNewline
-                $cfg_git = Read-Host " "
+                $cfg_git = Read-Host ""
                 if ($cfg_git -eq "y") { Configure-Git $hp }
 
                 Test-ProxyConnectivity $hp
@@ -550,9 +713,6 @@ function Main {
 
                 Write-Host ""
                 bold "=== 配置完成 ==="
-                warn "http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险"
-                info "防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS"
-                Write-Host ""
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
                 Write-Host "  PowerShell 当前窗口可运行: . `$PROFILE"
                 Write-Host "  CMD 已配置 AutoRun，新窗口自动加载"
@@ -568,7 +728,7 @@ function Main {
                 Configure-Npm $hp
 
                 Write-Host "  是否同时配置 git 代理？[y/N] " -NoNewline
-                $cfg_git = Read-Host " "
+                $cfg_git = Read-Host ""
                 if ($cfg_git -eq "y") { Configure-Git $hp }
 
                 Test-ProxyConnectivity $hp
@@ -577,9 +737,6 @@ function Main {
 
                 Write-Host ""
                 bold "=== 配置完成 ==="
-                warn "http_proxy 环境变量不代理 DNS 查询，存在 DNS 泄漏风险"
-                info "防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS"
-                Write-Host ""
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
             }
             "3" {
@@ -598,30 +755,7 @@ function Main {
                 Show-CurrentConfig
             }
             "7" {
-                $hp, $null = Auto-DetectPorts
-                bold ""
-                bold "  正在通过代理端口 $hp 检测出口 IP ..."
-                Write-Host "  $("-" * 50)"
-
-                foreach ($item in @(
-                    @{ svc = "Claude"; url = "https://claude.ai/cdn-cgi/trace" },
-                    @{ svc = "OpenAI"; url = "https://chat.openai.com/cdn-cgi/trace" }
-                )) {
-                    $result = Get-CfTraceIP $hp $item.url
-                    if ($result.ip) {
-                        $msg = "[OK] $($item.svc) 出口 IP: $($result.ip)"
-                        Write-Host "  $msg" -ForegroundColor Green
-                        if ($result.colo) { Write-Host "        接入: $($result.colo)" }
-                        if ($result.warp -and $result.warp -ne "off") { Write-Host "        WARP: $($result.warp)" }
-                        Write-Host ""
-                        Write-Host "  --- $($item.svc) trace 原始输出 ---"
-                        $result.raw -split "\r?\n" | ForEach-Object { Write-Host "  $_" }
-                        Write-Host "  $("-" * 50)"
-                    } else {
-                        warn "  $($item.svc): 无法访问 $($item.url)"
-                    }
-                }
-                ok "检测完成"
+                Show-SmartDNSMenu
             }
             default {
                 warn "无效选项，请重新输入"

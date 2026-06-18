@@ -1,146 +1,88 @@
-# Proxy Setup
+# proxy-setup
 
-Windows / Mac / Linux 代理一键配置工具，自动检测 v2rayN / Clash / sing-box 端口，支持 Codex CLI 和 Claude Code。
+跨平台代理配置脚本，支持 v2rayN / Clash / sing-box 等工具，一键配置系统代理。
 
-## 远程执行（无需下载）
+## 安装脚本
 
-> 适用于 `setup_proxy.sh` / `setup_proxy.ps1` 等自包含脚本。
+各平台使用对应的安装脚本，会自动检测并安装 Python（如未安装），然后运行代理配置。
 
-**Mac / Linux:**
+| 平台 | 脚本 | 说明 |
+|------|------|------|
+| Windows | `install_python.bat` | 双击运行，自动安装 Python 3.13 后启动配置 |
+| Windows | `install_python.ps1` | PowerShell 版本，支持更多自定义参数 |
+| macOS/Linux | `install_python.sh` | Bash 脚本，自动安装 Python 并运行配置 |
 
-```bash
-curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
-```
+### Windows 用户（ most common）
 
-> 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
+**推荐：双击 `install_python.bat`**
 
-```bash
-# 或 Python 版（需先下载，管道执行会因 input() 报错）
-curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.py -o /tmp/sp.py && python3 /tmp/sp.py && rm /tmp/sp.py
-```
+脚本会自动：
+1. 在以下位置查找 `setup_proxy.py` / `setup_proxy.ps1`：
+   - 当前 `.bat` 所在文件夹
+   - 父目录（`.bat` 在子文件夹时）
+   - `C:\Users\tt\WorkBuddy\Claw\`
+   - `Downloads/proxy-setup/`  (常见 ZIP 解压路径)
+   - 桌面 `proxy-setup/`
+2. 如未找到，提示手动输入路径
+3. 检测 Python，未安装则通过 winget 安装 Python 3.13
+4. 运行对应的代理配置脚本
 
-**Windows (PowerShell):**
+> 如果提示"Python not found"且 winget 不可用，请手动前往 https://www.python.org/downloads/ 安装（勾选 Add to PATH）
 
-```powershell
-$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
-```
+### 手动运行
 
-> `WebClient` + `iex` 方式直接在内存执行，无 BOM/编码问题，干净可靠。
->
-> 如果 GitHub 不通，用国内镜像：
-> ```powershell
-> $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://gh-proxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
-> ```
-
----
-
-## 下载执行
-
-> 适合需要先查看脚本内容再执行的场景。
-
-### 下载 ZIP
-
-**Windows (PowerShell):**
-
-```powershell
-Invoke-WebRequest -Uri "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.zip" -OutFile "$env:USERPROFILE\Downloads\proxy-setup.zip"
-Expand-Archive -Path "$env:USERPROFILE\Downloads\proxy-setup.zip" -DestinationPath "$env:USERPROFILE\Downloads\proxy-setup" -Force
-cd "$env:USERPROFILE\Downloads\proxy-setup\proxy-setup-master"
-.\install_python.bat
-```
-
-**Mac / Linux (curl):**
+已安装 Python 的情况下，可直接运行：
 
 ```bash
-curl -L -o ~/Downloads/proxy-setup.tar.gz "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.tar.gz"
-mkdir -p ~/Downloads/proxy-setup
-tar -xzf ~/Downloads/proxy-setup.tar.gz -C ~/Downloads/proxy-setup --strip-components=1
-cd ~/Downloads/proxy-setup
-bash setup_proxy.sh
+# Windows
+python setup_proxy.py
+
+# macOS/Linux
+python3 setup_proxy.py
 ```
 
-**Mac / Linux (wget):**
+## 代理配置说明
 
-```bash
-wget -O ~/Downloads/proxy-setup.tar.gz "https://github.com/chenzai666/proxy-setup/archive/refs/heads/master.tar.gz"
-mkdir -p ~/Downloads/proxy-setup
-tar -xzf ~/Downloads/proxy-setup.tar.gz -C ~/Downloads/proxy-setup --strip-components=1
-cd ~/Downloads/proxy-setup
-bash setup_proxy.sh
+脚本支持配置以下工具的代理设置：
+- v2rayN（Windows）
+- Clash（全平台）
+- sing-box（全平台）
+
+配置完成后，系统代理会自动指向对应端口（默认 10808 / 7890）。
+
+### Windows 智能DNS 禁用
+
+启用代理后，Windows 的「智能多宿主名称解析」(Smart Multi-Homed Name Resolution) 可能向所有网卡同时发送 DNS 查询，导致 DNS 泄漏。脚本支持**逐项独立切换**：
+
+**Python 版** (`setup_proxy.py`)：菜单选项 `8`  → 管理子菜单
+**PowerShell 版** (`setup_proxy.ps1`)：菜单选项 `7` → 管理子菜单
+
+三项注册表策略：
+
+| 选项 | 注册表键 | 作用 | 推荐 |
+|------|----------|------|:--:|
+| 智能多宿主 DNS 解析 | `DisableSmartNameResolution` | 禁止向所有网卡广播 DNS | ✅禁用 |
+| 并行 A/AAAA 查询 | `DisableParallelAandAAAA` | 停止并行 IPv4/IPv6 查询 | ✅禁用 |
+| mDNS/LLMNR 组播 | `EnableMulticast` | 关闭内网设备发现 | ⚠可选 |
+
+菜单支持：
+- **1/2/3** — 逐项独立开关
+- **4) 一键禁用推荐项** — 关闭前两项，保留组播（兼顾安全与内网便利）
+- **5) 全部恢复默认** — 删除所有策略键，恢复系统默认
+
+> 需要**管理员权限**。
+
+## 项目结构
+
+```
+proxy-setup/
+├── install_python.bat   # Windows 一键安装启动器
+├── install_python.ps1   # Windows PowerShell 版本
+├── install_python.sh    # macOS/Linux Bash 版本
+├── setup_proxy.py       # Python 代理配置主脚本
+└── setup_proxy.ps1      # PowerShell 代理配置脚本
 ```
 
----
+## 仓库地址
 
-### 或 Git Clone
-
-**Mac / Linux:**
-
-```bash
-git clone https://github.com/chenzai666/proxy-setup.git
-cd proxy-setup
-bash setup_proxy.sh
-```
-
-**Windows (命令提示符):**
-
-```
-git clone https://github.com/chenzai666/proxy-setup.git
-cd proxy-setup
-install_python.bat
-```
-
----
-
-### 纯 PowerShell（无需 Python，Windows）
-
-```powershell
-powershell -ExecutionPolicy Bypass -File setup_proxy.ps1
-```
-
----
-
-### 纯 bash（无需 Python，Mac / Linux）
-
-```bash
-bash setup_proxy.sh
-```
-
-如果要用 Python 版（先装 Python）：
-
-```bash
-bash install_python.sh
-```
-
-> `install_python.sh` 自动适配 Homebrew（含中科大/清华国内镜像）、apt、yum、dnf、pacman。安装后自动检测并运行 `setup_proxy.py`。
-
----
-
-### 纯 Batch（无需 Python，Windows）
-
-```cmd
-install_python.bat
-```
-
-> `install_python.bat` 自动在常见路径查找 `setup_proxy.py`，未找到会提示手动输入；检测到 Python 未安装时通过 winget 自动安装 Python 3.13。
-
----
-
-## 文件说明
-
-| 文件 | 类型 | 需要 Python | 平台 |
-|------|------|:----------:|------|
-| `setup_proxy.sh` | Shell | 否 | Mac / Linux |
-| `setup_proxy.py` | Python | 是 | 全平台 |
-| `setup_proxy.ps1` | PowerShell | 否 | Windows |
-| `install_python.sh` | Shell | 否 | Mac / Linux |
-| `install_python.bat` | Batch | 否 | Windows |
-
-## 菜单功能
-
-1. 配置代理（自动检测端口）
-2. 配置代理（手动指定端口）
-3. 移除所有代理配置
-4. 验证当前代理连通性
-5. 全链路测试 (OpenAI + Anthropic)
-6. 查看当前代理配置
-0. 退出
+https://github.com/chenzai666/proxy-setup

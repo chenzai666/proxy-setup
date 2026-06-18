@@ -733,6 +733,218 @@ def verify_proxy(http_port: int):
 
 # ─── 菜单 ────────────────────────────────────────────────────────────
 
+# ─── Windows 智能DNS 禁用 ───────────────────────────────────────────
+
+SMART_DNS_REGS = [
+    # (key_path, value_name, disable_value, restore_delete)
+    # DisableSmartNameResolution: 禁止 Windows 向所有网卡同时发送 DNS 查询
+    (r"HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient",
+     "DisableSmartNameResolution", 1),
+    # DisableParallelAandAAAA: 禁止并行 IPv4/IPv6 查询
+    (r"HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters",
+     "DisableParallelAandAAAA", 1),
+    # EnableMulticast: 关闭 mDNS / LLMNR 组播
+    (r"HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient",
+     "EnableMulticast", 0),
+]
+
+
+def _reg_exists(key: str, value: str) -> bool:
+    """检查注册表值是否存在"""
+    try:
+        result = subprocess.run(
+            ["reg", "query", key, "/v", value],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _reg_get_dword(key: str, value: str) -> int:
+    """读取 REG_DWORD 值，不存在返回 -1"""
+    try:
+        result = subprocess.run(
+            ["reg", "query", key, "/v", value],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if value in line and "REG_DWORD" in line:
+                    hex_val = line.strip().split()[-1]
+                    return int(hex_val, 16)
+        return -1
+    except Exception:
+        return -1
+
+
+def check_smart_dns_status() -> dict:
+    """检查智能DNS 禁用状态，返回 {key_desc: (current_value, target_value, is_disabled)}"""
+    status = {}
+    key_descs = {
+        "DisableSmartNameResolution": ("智能多宿主 DNS 解析", 1),
+        "DisableParallelAandAAAA": ("并行 A/AAAA 查询", 1),
+        "EnableMulticast": ("mDNS/LLMNR 组播", 0),
+    }
+    for key_path, value_name, target in SMART_DNS_REGS:
+        desc, tgt = key_descs.get(value_name, (value_name, target))
+        current = _reg_get_dword(key_path, value_name)
+        is_disabled = (current == target)
+        status[desc] = (current, target, is_disabled)
+    return status
+
+
+def toggle_smart_dns_single(key_path: str, value_name: str, target: int, enable: bool = True):
+    """切换单个智能DNS 注册表项
+    enable=True:  写入 target 值（禁用）
+    enable=False: 删除键值（恢复系统默认）
+    """
+    if enable:
+        try:
+            subprocess.run(
+                ["reg", "add", key_path, "/v", value_name,
+                 "/t", "REG_DWORD", "/d", str(target), "/f"],
+                capture_output=True, check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            ok(f"{value_name} = {target}")
+        except subprocess.CalledProcessError as e:
+            warn(f"设置失败（可能需要管理员权限）: {e}")
+    else:
+        try:
+            subprocess.run(
+                ["reg", "delete", key_path, "/v", value_name, "/f"],
+                capture_output=True, check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            ok(f"{value_name} 已恢复系统默认")
+        except subprocess.CalledProcessError:
+            warn(f"恢复失败（可能需要管理员权限）: {value_name}")
+
+
+def disable_smart_dns():
+    """禁用 Windows 智能多宿主 DNS 解析（需管理员权限）"""
+    bold("\n  禁用 Windows 智能DNS ...")
+    print(f"  {'─' * 45}")
+
+    failed = []
+    for key_path, value_name, target in SMART_DNS_REGS:
+        info(f"正在设置 {value_name} = {target} ...")
+        try:
+            subprocess.run(
+                ["reg", "add", key_path, "/v", value_name,
+                 "/t", "REG_DWORD", "/d", str(target), "/f"],
+                capture_output=True, check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            ok(f"{value_name} = {target}")
+        except subprocess.CalledProcessError as e:
+            warn(f"设置失败（可能需要管理员权限）: {e}")
+            failed.append(value_name)
+
+    if not failed:
+        ok("Windows 智能DNS 已禁用")
+        print(f"  {'─' * 45}")
+        info("效果: DNS 查询不再向所有网卡广播，避免代理环境 DNS 泄漏")
+        info("恢复方法: 重新运行本脚本 → 选项 8 → 恢复")
+    else:
+        warn(f"部分设置失败: {', '.join(failed)}")
+        info("请以管理员身份运行本脚本后重试")
+
+
+def restore_smart_dns():
+    """恢复 Windows 智能DNS 到默认值（删除所有策略键，恢复系统默认）"""
+    bold("\n  恢复 Windows 智能DNS 默认设置 ...")
+    print(f"  {'─' * 45}")
+
+    for key_path, value_name, _ in SMART_DNS_REGS:
+        info(f"正在恢复 {value_name} ...")
+        try:
+            subprocess.run(
+                ["reg", "delete", key_path, "/v", value_name, "/f"],
+                capture_output=True, check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            ok(f"{value_name} 已恢复系统默认")
+        except subprocess.CalledProcessError:
+            # 键不存在也算成功
+            ok(f"{value_name} 已是系统默认")
+
+    ok("已恢复默认 DNS 行为")
+
+
+def smart_dns_menu():
+    """智能DNS 管理子菜单（独立切换每项）"""
+    bold("\n===  Windows 智能DNS 管理 ===")
+
+    # 三项对应的注册表键映射
+    key_map = {
+        "DisableSmartNameResolution": SMART_DNS_REGS[0],
+        "DisableParallelAandAAAA":    SMART_DNS_REGS[1],
+        "EnableMulticast":            SMART_DNS_REGS[2],
+    }
+    # 菜单显示名称
+    key_labels = [
+        ("智能多宿主 DNS 解析", "DisableSmartNameResolution"),
+        ("并行 A/AAAA 查询",    "DisableParallelAandAAAA"),
+        ("mDNS/LLMNR 组播",     "EnableMulticast"),
+    ]
+
+    while True:
+        status = check_smart_dns_status()
+
+        print(f"\n  当前状态:")
+        print(f"  {'─' * 52}")
+        for desc, (current, target, is_disabled) in status.items():
+            if current >= 0:
+                tag = "\033[32m已禁用\033[0m" if is_disabled else "\033[33m未禁用\033[0m"
+                print(f"  {desc:<22} 当前={current}  目标={target}  {tag}")
+            else:
+                print(f"  {desc:<22} 未配置（系统默认）")
+        print(f"  {'─' * 52}")
+
+        # 逐项开关
+        for i, (label, vname) in enumerate(key_labels, 1):
+            is_d = status[label][2]
+            action = "恢复" if is_d else "禁用"
+            tag = ""
+            if vname == "EnableMulticast":
+                tag = "（⚠ 影响内网 .local / 打印机发现）"
+            print(f"  {i}) {action} {label}{tag}")
+
+        # 快捷操作
+        first_two_ok = all(status[l][2] for l, _ in key_labels[:2])
+        print(f"  4) 一键禁用推荐项 (前两项，保留组播)")
+        print(f"  5) 全部恢复默认")
+        print(f"  0) 返回主菜单")
+
+        choice = input("\n请选择 [0-5]: ").strip()
+
+        if choice == "0":
+            return
+        elif choice in ("1", "2", "3"):
+            idx = int(choice) - 1
+            label, vname = key_labels[idx]
+            key_path, value_name, target = key_map[vname]
+            is_d = status[label][2]
+            if is_d:
+                toggle_smart_dns_single(key_path, value_name, target, enable=False)
+            else:
+                toggle_smart_dns_single(key_path, value_name, target, enable=True)
+        elif choice == "4":
+            for label, vname in key_labels[:2]:
+                if not status[label][2]:
+                    key_path, value_name, target = key_map[vname]
+                    toggle_smart_dns_single(key_path, value_name, target, enable=True)
+            ok("推荐项已禁用 (前两项)")
+        elif choice == "5":
+            restore_smart_dns()
+        else:
+            warn("无效选项")
+
+
 def print_menu():
     plat_name = "macOS" if IS_MAC else ("Windows" if IS_WINDOWS else platform.system())
     bold(f"\n===  {plat_name} 代理一键配置 — Codex / Claude Code  ===")
@@ -743,6 +955,8 @@ def print_menu():
     print("  5) 全链路测试 (OpenAI + Anthropic)")
     print("  6) 查看当前代理配置")
     print("  7) 检测出口 IP (Claude + OpenAI cf-trace)")
+    if IS_WINDOWS:
+        print("  8) 禁用 Windows 智能DNS")
     print("  0) 退出")
     print()
 
@@ -930,6 +1144,9 @@ def main():
                 print(f"  {'─' * 52}")
 
             ok("检测完成")
+
+        elif choice == "8" and IS_WINDOWS:
+            smart_dns_menu()
 
         else:
             warn("无效选项，请重新输入")

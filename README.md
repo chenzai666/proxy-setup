@@ -73,10 +73,20 @@ bash setup_proxy.sh
 
 ### 或 Git Clone
 
+**Mac / Linux:**
+
 ```bash
 git clone https://github.com/chenzai666/proxy-setup.git
 cd proxy-setup
 bash setup_proxy.sh
+```
+
+**Windows (命令提示符):**
+
+```
+git clone https://github.com/chenzai666/proxy-setup.git
+cd proxy-setup
+install_python.bat
 ```
 
 ---
@@ -102,6 +112,16 @@ bash install_python.sh
 ```
 
 > `install_python.sh` 自动适配 Homebrew（含中科大/清华国内镜像）、apt、yum、dnf、pacman。安装后自动检测并运行 `setup_proxy.py`。
+
+---
+
+### 纯 Batch（无需 Python，Windows）
+
+```cmd
+install_python.bat
+```
+
+> `install_python.bat` 自动在常见路径查找 `setup_proxy.py`，未找到会提示手动输入；检测到 Python 未安装时通过 winget 自动安装 Python 3.13。
 
 ---
 

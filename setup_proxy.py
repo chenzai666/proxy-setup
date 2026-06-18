@@ -875,6 +875,46 @@ def restore_smart_dns():
     ok("已恢复默认 DNS 行为")
 
 
+def check_dns_leak():
+    """检测 DNS 是否泄漏 — 通过 nslookup 直接查询公网 DNS 服务器"""
+    targets = [
+        ("8.8.8.8",        "Google"),
+        ("1.1.1.1",        "Cloudflare"),
+        ("9.9.9.9",        "Quad9"),
+        ("208.67.222.222", "OpenDNS"),
+    ]
+
+    info("正在检测 DNS 泄漏 (nslookup → 公网 DNS)...")
+    results = []
+
+    for server, name in targets:
+        try:
+            r = subprocess.run(
+                ["nslookup", "google.com", server],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            if r.returncode == 0 and "Address" in r.stdout:
+                results.append((name, server))
+        except Exception:
+            pass
+
+    print()
+    leak_count = len(results)
+    if leak_count >= 3:
+        warn(f"检测到 {leak_count}/4 个 DNS 服务器可达 — DNS 严重泄漏！")
+    elif leak_count >= 1:
+        warn(f"检测到 {leak_count}/4 个 DNS 服务器可达 — 可能存在 DNS 泄漏")
+    else:
+        ok("未检测到 DNS 泄漏 (0/4 可达) — 代理工作正常")
+
+    for name, server in results:
+        print(f"    ⚠ {name} ({server}) 可达 — DNS 查询绕过了代理")
+
+    if leak_count > 0:
+        info("建议: 返回菜单 → 选项 4 一键禁用推荐项 (前两项策略键)")
+
+
 def smart_dns_menu():
     """智能DNS 管理子菜单（独立切换每项）"""
     bold("\n===  Windows 智能DNS 管理 ===")
@@ -918,9 +958,10 @@ def smart_dns_menu():
         first_two_ok = all(status[l][2] for l, _ in key_labels[:2])
         print(f"  4) 一键禁用推荐项 (前两项，保留组播)")
         print(f"  5) 全部恢复默认")
+        print(f"  6) 检测 DNS 泄漏")
         print(f"  0) 返回主菜单")
 
-        choice = input("\n请选择 [0-5]: ").strip()
+        choice = input("\n请选择 [0-6]: ").strip()
 
         if choice == "0":
             return
@@ -941,6 +982,8 @@ def smart_dns_menu():
             ok("推荐项已禁用 (前两项)")
         elif choice == "5":
             restore_smart_dns()
+        elif choice == "6":
+            check_dns_leak()
         else:
             warn("无效选项")
 

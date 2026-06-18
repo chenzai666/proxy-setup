@@ -579,6 +579,49 @@ function Restore-SmartDNS {
     ok "已恢复默认 DNS 行为"
 }
 
+function Test-DNSLeak {
+    <#
+    .SYNOPSIS
+        检测 DNS 是否泄漏 — 通过 nslookup 直接查询公网 DNS 服务器
+    #>
+    $targets = @(
+        @{Server="8.8.8.8";        Name="Google"},
+        @{Server="1.1.1.1";        Name="Cloudflare"},
+        @{Server="9.9.9.9";        Name="Quad9"},
+        @{Server="208.67.222.222"; Name="OpenDNS"}
+    )
+
+    info "正在检测 DNS 泄漏 (nslookup → 公网 DNS)..."
+    $results = @()
+
+    foreach ($t in $targets) {
+        try {
+            $out = nslookup google.com $t.Server 2>&1
+            if ($LASTEXITCODE -eq 0 -and $out -match "Address") {
+                $results += $t
+            }
+        } catch {}
+    }
+
+    Write-Host ""
+    $count = $results.Count
+    if ($count -ge 3) {
+        warn "检测到 $count/4 个 DNS 服务器可达 — DNS 严重泄漏！"
+    } elseif ($count -ge 1) {
+        warn "检测到 $count/4 个 DNS 服务器可达 — 可能存在 DNS 泄漏"
+    } else {
+        ok "未检测到 DNS 泄漏 (0/4 可达) — 代理工作正常"
+    }
+
+    foreach ($t in $results) {
+        Write-Host "    ⚠ $($t.Name) ($($t.Server)) 可达 — DNS 查询绕过了代理"
+    }
+
+    if ($count -gt 0) {
+        info "建议: 返回菜单 → 选项 4 一键禁用推荐项 (前两项策略键)"
+    }
+}
+
 function Show-SmartDNSMenu {
     <#
     .SYNOPSIS
@@ -627,9 +670,10 @@ function Show-SmartDNSMenu {
         # 快捷操作
         Write-Host "  4) 一键禁用推荐项 (前两项，保留组播)"
         Write-Host "  5) 全部恢复默认"
+        Write-Host "  6) 检测 DNS 泄漏"
         Write-Host "  0) 返回主菜单"
 
-        $choice = Read-Host "请选择 [0-5]"
+        $choice = Read-Host "请选择 [0-6]"
         switch ($choice) {
             "0" { return }
             "1" {
@@ -657,6 +701,7 @@ function Show-SmartDNSMenu {
                 ok "推荐项已禁用 (前两项)"
             }
             "5" { Restore-SmartDNS }
+            "6" { Test-DNSLeak }
             default { warn "无效选项" }
         }
     }

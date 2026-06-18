@@ -43,16 +43,32 @@ python3 setup_proxy.py
 
 ## 远程执行（无需下载）
 
-### Windows
+> 适用于 `setup_proxy.sh` / `setup_proxy.ps1` 等自包含脚本。
+
+**Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1 | iex
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
 ```
 
-### macOS / Linux
+> `WebClient` + `iex` 在内存执行，无 BOM/编码问题，且能避开 `irm` 的 CDN 缓存问题。
+>
+> 如果 GitHub 不通，用国内镜像：
+> ```powershell
+> $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://gh-proxy.com/https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1'))
+> ```
+
+**Mac / Linux:**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh | bash
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
+```
+
+> 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
+
+```bash
+# 或 Python 版（需先下载，管道执行会因 input() 报错）
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.py -o /tmp/sp.py && python3 /tmp/sp.py && rm /tmp/sp.py
 ```
 
 ### 或 Git Clone

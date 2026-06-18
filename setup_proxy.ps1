@@ -718,11 +718,15 @@ function Test-DNSLeak {
     if ($okCount -ge 2) {
         ok "DNS 泄漏检测通过 ($okCount/$totalChecks)"
     } elseif ($okCount -ge 1) {
-        warn "DNS 存在可疑 ($okCount/$totalChecks) — 建议用浏览器访问 dnsleaktest.com 复检"
+        warn "DNS 存在可疑 ($okCount/$totalChecks) — 建议用浏览器访问 ipleak.net/dnsleaktest.com 复检"
     } else {
         warn "DNS 泄漏风险较高 — 建议检查代理客户端设置"
     }
-    info "手动验证: 浏览器打开 https://dnsleaktest.com 查看实际 DNS 解析服务器"
+    info "手动验证网站:"
+    info "  • https://dnsleaktest.com   — DNS 泄漏检测"
+    info "  • https://ipleak.net        — 全量泄漏检测 (IP/WebRTC/DNS)"
+    info "  • https://ipleak.org        — 同上，备用"
+    info "  • https://browserleaks.com/dns — 详细 DNS 请求分析"
 }
 
 function Show-SmartDNSMenu {

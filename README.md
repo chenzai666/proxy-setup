@@ -41,6 +41,39 @@ python setup_proxy.py
 python3 setup_proxy.py
 ```
 
+## 远程执行（无需下载）
+
+### Windows（PowerShell 5.1+）
+
+```powershell
+irm https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.ps1 | iex
+```
+
+### Windows（CMD / 双击 .bat）
+
+```cmd
+curl -sSL -o install_python.bat https://raw.githubusercontent.com/chenzai666/proxy-setup/master/install_python.bat && install_python.bat
+```
+
+### macOS / Linux
+
+```bash
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh | bash
+```
+
+### 或 Git Clone
+
+```bash
+git clone https://github.com/chenzai666/proxy-setup.git
+cd proxy-setup
+
+# Windows（CMD）
+install_python.bat
+
+# macOS / Linux
+bash setup_proxy.sh
+```
+
 ## 代理配置说明
 
 脚本支持配置以下工具的代理设置：

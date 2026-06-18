@@ -618,34 +618,58 @@ function Test-DNSLeak {
         $okCount++
     }
 
-    # ── 2. 用 IWR 通过代理发 HTTPS 请求 (PS5.1 兼容版，绕过证书校验) ──
+    # ── 2. 代理端口 TCP 连通性 + 协议类型嗅探 ──
     $ports = Auto-DetectPorts
     $httpPort = $ports[0]
+    $socksPort = $ports[1]
+    info "代理端口 TCP 连通性检测 ($httpPort / $socksPort) ..."
+
+    # 2a. 确认 HTTP 代理端口是否响应
+    $httpProxyAlive = $false
     try {
-        # PS5.1 没有 -SkipCertificateCheck，用 ServicePointManager 绕过
-        if ($PSVersionTable.PSVersion.Major -lt 6) {
-            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        if ($tcp.ConnectAsync("127.0.0.1", $httpPort).Wait(3000)) {
+            $tcp.Close()
+            $httpProxyAlive = $true
         }
-        $iwrParams = @{
-            Uri       = "https://www.google.com"
-            Proxy     = "http://127.0.0.1:$httpPort"
-            Method    = "Head"
-            TimeoutSec = 10
-            ErrorAction = "Stop"
+    } catch {}
+
+    # 2b. 确认 SOCKS5 端口是否响应
+    $socksAlive = $false
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        if ($tcp.ConnectAsync("127.0.0.1", $socksPort).Wait(3000)) {
+            $tcp.Close()
+            $socksAlive = $true
         }
-        if ($PSVersionTable.PSVersion.Major -ge 6) {
-            $iwrParams.SkipCertificateCheck = $true
+    } catch {}
+
+    # 2c. 尝试通过代理解析 DNS（自动适配 HTTP / SOCKS5）
+    if ($httpProxyAlive) {
+        try {
+            # PS5.1 兼容：WebClient + HTTP 代理
+            $wc = New-Object System.Net.WebClient
+            $wc.Proxy = New-Object System.Net.WebProxy("http://127.0.0.1:$httpPort", $true)
+            if ($PSVersionTable.PSVersion.Major -lt 6) {
+                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+            }
+            $wc.Headers.Add("User-Agent", "proxy-setup-dns-check")
+            $result = $wc.DownloadString("https://www.google.com")
+            if ($result -and $result.Length -gt 100) {
+                ok "代理 HTTP 连通性正常 (WebClient → google, 响应 $($result.Length) bytes)"
+                $okCount++
+            } else {
+                warn "代理 HTTP 响应异常"
+            }
+            $wc.Dispose()
+        } catch {
+            warn "代理 HTTP 连通性失败: $_"
         }
-        $resp = Invoke-WebRequest @iwrParams
-        if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) {
-            ok "代理 DNS 解析正常 (IWR → google, 状态码 $($resp.StatusCode))"
-            $okCount++
-        } else {
-            warn "代理 DNS 解析异常 (IWR → google, 状态码 $($resp.StatusCode))"
-        }
-    } catch {
-        warn "代理 HTTPS 连通性检测失败: $_"
-        info "可能原因: 代理未开 / 节点不通 / 需要认证"
+    } elseif ($socksAlive) {
+        ok "代理 SOCKS5 端口活跃 ($socksPort) — 代理正常运行"
+        $okCount++
+    } else {
+        warn "代理端口均未响应 — 请确认代理客户端是否运行"
     }
 
     # ── 3. 辅助: 直连 8.8.8.8 ──

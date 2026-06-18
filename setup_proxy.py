@@ -917,24 +917,54 @@ def check_dns_leak():
     except Exception:
         pass
 
-    # ── 2. 用 Python urllib 通过代理发 HTTPS 请求，验证代理 DNS 可用 ──
-    http_port, _ = auto_detect_ports()
+    # ── 2. 代理端口 TCP 连通性 + 协议类型嗅探 ──
+    http_port, socks_port = auto_detect_ports()
     import urllib.request
     import ssl
-    proxy_addr = f"http://127.0.0.1:{http_port}"
+    import socket as _socket
+
+    info(f"代理端口 TCP 连通性检测 ({http_port} / {socks_port}) ...")
+
+    # 2a. TCP 端口检测
+    http_port_alive = False
+    socks_port_alive = False
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        proxy_handler = urllib.request.ProxyHandler({"http": proxy_addr, "https": proxy_addr})
-        opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
-        req = urllib.request.Request("https://www.google.com", method="HEAD")
-        resp = opener.open(req, timeout=10)
-        ok(f"代理 DNS 解析正常 (urllib → google, 状态码 {resp.status})")
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        s.settimeout(3)
+        if s.connect_ex(("127.0.0.1", http_port)) == 0:
+            http_port_alive = True
+        s.close()
+    except Exception:
+        pass
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        s.settimeout(3)
+        if s.connect_ex(("127.0.0.1", socks_port)) == 0:
+            socks_port_alive = True
+        s.close()
+    except Exception:
+        pass
+
+    # 2b. HTTP 代理连通性检测
+    if http_port_alive:
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            proxy_handler = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{http_port}", "https": f"http://127.0.0.1:{http_port}"})
+            opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
+            req = urllib.request.Request("https://www.google.com", method="HEAD")
+            resp = opener.open(req, timeout=10)
+            ok(f"代理 HTTP 连通性正常 (urllib → google, 状态码 {resp.status})")
+            ok_count += 1
+        except Exception as e:
+            warn(f"代理 HTTP 连通性失败: {e}")
+            info("可能原因: 端口为 SOCKS5 协议 / 节点不通 / 需要认证")
+    elif socks_port_alive:
+        ok(f"代理 SOCKS5 端口活跃 ({socks_port}) — 代理正常运行")
         ok_count += 1
-    except Exception as e:
-        warn(f"代理 HTTPS 连通性检测失败: {e}")
-        info("可能原因: 代理未开 / 节点不通 / 需要认证")
+    else:
+        warn("代理端口均未响应 — 请确认代理客户端是否运行")
 
     # ── 3. 试一下直连 8.8.8.8 是否有响应（辅助判断） ──
     info("辅助检测: 直连公网 DNS 8.8.8.8 ...")

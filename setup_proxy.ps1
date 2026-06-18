@@ -618,21 +618,25 @@ function Test-DNSLeak {
         $okCount++
     }
 
-    # ── 2. 用 curl 通过代理验证 DNS 解析 ──
+    # ── 2. 用 Invoke-WebRequest 通过代理发 HTTPS 请求 ──
     $ports = Auto-DetectPorts
     $httpPort = $ports[0]
     try {
-        $curlOut = & curl -s -o NUL -w "%{http_code}" --proxy "http://127.0.0.1:$httpPort" `
-            "https://www.google.com" --connect-timeout 8 --max-time 10 2>&1
-        $exitCode = $LASTEXITCODE
-        if ($exitCode -eq 0 -and $curlOut -match "^(200|301|302|307|308)$") {
-            ok "代理 DNS 解析正常 (curl → google, 状态码 $curlOut)"
+        $resp = Invoke-WebRequest -Uri "https://www.google.com" `
+            -Proxy "http://127.0.0.1:$httpPort" `
+            -Method Head `
+            -TimeoutSec 10 `
+            -SkipCertificateCheck `
+            -ErrorAction Stop
+        if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) {
+            ok "代理 DNS 解析正常 (IWR → google, 状态码 $($resp.StatusCode))"
             $okCount++
         } else {
-            warn "代理 DNS 解析异常 (curl → google, 状态码 $curlOut)"
+            warn "代理 DNS 解析异常 (IWR → google, 状态码 $($resp.StatusCode))"
         }
     } catch {
-        info "跳过 curl 检测（无 curl 或代理不通）"
+        warn "代理 HTTPS 连通性检测失败: $_"
+        info "可能原因: 代理未开 / 节点不通 / 需要认证"
     }
 
     # ── 3. 辅助: 直连 8.8.8.8 ──

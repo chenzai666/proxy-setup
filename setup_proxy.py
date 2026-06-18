@@ -917,25 +917,24 @@ def check_dns_leak():
     except Exception:
         pass
 
-    # ── 2. 用 curl 通过代理解析域名，验证代理 DNS 可用 ──
+    # ── 2. 用 Python urllib 通过代理发 HTTPS 请求，验证代理 DNS 可用 ──
     http_port, _ = auto_detect_ports()
+    import urllib.request
+    import ssl
+    proxy_addr = f"http://127.0.0.1:{http_port}"
     try:
-        r = subprocess.run(
-            ["curl", "-s", "-o", "NUL", "-w", "%{http_code}",
-             "--proxy", f"http://127.0.0.1:{http_port}",
-             "https://www.google.com",
-             "--connect-timeout", "8", "--max-time", "10"],
-            capture_output=True, text=True, timeout=12,
-            shell=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-        )
-        if r.returncode == 0 and r.stdout.strip() in ("200", "301", "302", "307", "308"):
-            ok(f"代理 DNS 解析正常 (curl → google, 状态码 {r.stdout.strip()})")
-            ok_count += 1
-        else:
-            warn(f"代理 DNS 解析异常 (curl → google, 状态码 {r.stdout.strip()})")
-    except Exception:
-        info("跳过 curl 检测（无 curl 或代理不通）")
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy_addr, "https": proxy_addr})
+        opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
+        req = urllib.request.Request("https://www.google.com", method="HEAD")
+        resp = opener.open(req, timeout=10)
+        ok(f"代理 DNS 解析正常 (urllib → google, 状态码 {resp.status})")
+        ok_count += 1
+    except Exception as e:
+        warn(f"代理 HTTPS 连通性检测失败: {e}")
+        info("可能原因: 代理未开 / 节点不通 / 需要认证")
 
     # ── 3. 试一下直连 8.8.8.8 是否有响应（辅助判断） ──
     info("辅助检测: 直连公网 DNS 8.8.8.8 ...")

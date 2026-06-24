@@ -26,6 +26,14 @@ NO_PROXY = "localhost,127.0.0.1,::1"
 ANTHROPIC_BASE_URL = ""
 # ─────────────────────────────────────────────────────────────────────
 
+CF_TRACE_TARGETS = [
+    ("Claude Web", "https://claude.ai/cdn-cgi/trace"),
+    ("Claude Console", "https://console.anthropic.com/cdn-cgi/trace"),
+    ("Anthropic API", "https://api.anthropic.com/cdn-cgi/trace"),
+    ("ChatGPT Web", "https://chatgpt.com/cdn-cgi/trace"),
+    ("OpenAI API", "https://api.openai.com/cdn-cgi/trace"),
+]
+
 PROXY_BLOCK_START = "# >>> proxy-config start <<<"
 PROXY_BLOCK_END   = "# >>> proxy-config end <<<"
 
@@ -585,21 +593,9 @@ def full_connectivity_test(http_port: int):
     else:
         warn("部分 API 不通，检查对应目标是否被节点屏蔽")
 
-    # 用 Cloudflare trace 检测访问 Claude 和 OpenAI 的真实出口 IP
+    # 用 Cloudflare trace 检测访问 Claude / OpenAI 的真实出口 IP
     print(f"  {'─' * 45}")
-    bold("  出口 IP 检测（通过 Cloudflare trace）:")
-
-    for svc_name, fetch_func in [("Claude", _fetch_claude_ip), ("OpenAI", _fetch_openai_ip)]:
-        ip, colo, warp = fetch_func(http_port)
-        if ip:
-            parts = [f"{svc_name}: {ip}"]
-            if colo:
-                parts.append(f"接入: {colo}")
-            if warp and warp != "off":
-                parts.append(f"WARP: {warp}")
-            ok(" | ".join(parts))
-        else:
-            warn(f"  {svc_name}: 无法获取（代理可能未连外网）")
+    check_cf_trace_exit_ips(http_port, show_raw=False)
 
     return all_ok
 
@@ -640,14 +636,14 @@ def _parse_cf_trace(output: str) -> dict:
 
 def _fetch_cf_trace_ip(http_port: int, trace_url: str) -> tuple:
     """
-    通用：通过代理访问任意 Cloudflare trace URL，返回 (ip, colo, warp)
-    trace_url: 如 https://claude.ai/cdn-cgi/trace 或 https://chat.openai.com/cdn-cgi/trace
+    通用：通过代理访问任意 Cloudflare trace URL，返回 (ip, loc, colo, warp, trace)
+    trace_url: 如 https://claude.ai/cdn-cgi/trace 或 https://api.openai.com/cdn-cgi/trace
     """
     output = _curl_proxy(http_port, trace_url)
     if not output:
-        return "", "", ""
+        return "", "", "", "off", {}
     trace = _parse_cf_trace(output)
-    return trace.get("ip", ""), trace.get("colo", ""), trace.get("warp", "off")
+    return trace.get("ip", ""), trace.get("loc", ""), trace.get("colo", ""), trace.get("warp", "off"), trace
 
 
 def _fetch_claude_ip(http_port: int) -> tuple:
@@ -656,8 +652,45 @@ def _fetch_claude_ip(http_port: int) -> tuple:
 
 
 def _fetch_openai_ip(http_port: int) -> tuple:
-    """访问 OpenAI 时的出口 IP（通过 chat.openai.com/cdn-cgi/trace）"""
-    return _fetch_cf_trace_ip(http_port, "https://chat.openai.com/cdn-cgi/trace")
+    """访问 OpenAI 时的出口 IP（通过 api.openai.com/cdn-cgi/trace）"""
+    return _fetch_cf_trace_ip(http_port, "https://api.openai.com/cdn-cgi/trace")
+
+
+def check_cf_trace_exit_ips(http_port: int, show_raw: bool = True):
+    """检测访问 Claude / OpenAI 相关域名时 Cloudflare 看到的出口 IP。"""
+    green = "\033[32m"
+    reset = "\033[0m"
+    bold("  出口 IP 检测（通过 Cloudflare trace）:")
+
+    for svc_name, trace_url in CF_TRACE_TARGETS:
+        output = _curl_proxy(http_port, trace_url)
+        if not output:
+            warn(f"  {svc_name}: 无法访问 {trace_url}")
+            continue
+
+        trace = _parse_cf_trace(output)
+        ip = trace.get("ip", "")
+        loc = trace.get("loc", "")
+        colo = trace.get("colo", "")
+        warp = trace.get("warp", "off")
+
+        if ip:
+            parts = [f"{svc_name} 出口 IP: {ip}"]
+            if loc:
+                parts.append(f"地区: {loc}")
+            if colo:
+                parts.append(f"接入: {colo}")
+            if warp and warp != "off":
+                parts.append(f"WARP: {warp}")
+            print(f"  {green}[OK]{reset} {' | '.join(parts)}")
+        else:
+            warn(f"  {svc_name}: trace 返回异常")
+
+        if show_raw:
+            print(f"\n  --- {svc_name} trace 原始输出 ---")
+            for line in output.splitlines():
+                print(f"  {line}")
+            print(f"  {'─' * 52}")
 
 
 def _fetch_exit_ip(http_port: int) -> tuple:
@@ -1198,7 +1231,7 @@ def main():
 
     while True:
         print_menu()
-        choice = input("请选择 [0-6]: ").strip()
+        choice = input("请选择 [0-8]: ").strip()
 
         if choice == "0":
             print("退出")
@@ -1273,41 +1306,9 @@ def main():
         elif choice == "7":
             # 检测访问 Claude 和 OpenAI 的出口 IP（通过 cf-trace）
             http_port, _ = auto_detect_ports()
-            green = "\033[32m"
-            reset = "\033[0m"
             bold(f"\n  正在通过代理端口 {http_port} 检测出口 IP ...")
             print(f"  {'─' * 52}")
-
-            for svc_name, trace_url in [
-                ("Claude", "https://claude.ai/cdn-cgi/trace"),
-                ("OpenAI", "https://chat.openai.com/cdn-cgi/trace"),
-            ]:
-                output = _curl_proxy(http_port, trace_url)
-                if not output:
-                    warn(f"  {svc_name}: 无法访问 {trace_url}")
-                    continue
-
-                trace = _parse_cf_trace(output)
-                ip   = trace.get("ip", "")
-                colo = trace.get("colo", "")
-                warp = trace.get("warp", "off")
-
-                if ip:
-                    parts = [f"{svc_name} 出口 IP: {ip}"]
-                    if colo:
-                        parts.append(f"接入: {colo}")
-                    if warp and warp != "off":
-                        parts.append(f"WARP: {warp}")
-                    print(f"  {green}[OK]{reset} {' | '.join(parts)}")
-                else:
-                    warn(f"  {svc_name}: trace 返回异常")
-
-                # 显示原始 trace 输出
-                print(f"\n  --- {svc_name} trace 原始输出 ---")
-                for line in output.splitlines():
-                    print(f"  {line}")
-                print(f"  {'─' * 52}")
-
+            check_cf_trace_exit_ips(http_port, show_raw=True)
             ok("检测完成")
 
         elif choice == "8" and IS_WINDOWS:

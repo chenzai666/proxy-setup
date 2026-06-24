@@ -96,6 +96,26 @@ bash setup_proxy.sh
 
 配置完成后，系统代理会自动指向对应端口（默认 10808 / 7890）。
 
+### Claude / OpenAI 出口 IP 检测
+
+脚本支持通过 Cloudflare `cdn-cgi/trace` 检测访问 Claude、Anthropic API、ChatGPT、OpenAI API 时的真实出口 IP、地区代码和接入节点。
+
+菜单入口：
+
+- **Python 版** (`setup_proxy.py`)：菜单选项 `7`
+- **Bash 版** (`setup_proxy.sh`)：菜单选项 `7`
+- **PowerShell 版** (`setup_proxy.ps1`)：菜单选项 `8`
+
+检测目标：
+
+- `https://claude.ai/cdn-cgi/trace`
+- `https://console.anthropic.com/cdn-cgi/trace`
+- `https://api.anthropic.com/cdn-cgi/trace`
+- `https://chatgpt.com/cdn-cgi/trace`
+- `https://api.openai.com/cdn-cgi/trace`
+
+重点看输出中的 `ip`、`loc`、`colo`、`warp` 字段。`loc=US` 代表该域名看到的出口地区是美国。
+
 ### Windows 智能DNS 禁用
 
 启用代理后，Windows 的「智能多宿主名称解析」(Smart Multi-Homed Name Resolution) 可能向所有网卡同时发送 DNS 查询，导致 DNS 泄漏。脚本支持**逐项独立切换**：
@@ -127,6 +147,7 @@ proxy-setup/
 ├── install_python.ps1   # Windows PowerShell 版本
 ├── install_python.sh    # macOS/Linux Bash 版本
 ├── setup_proxy.py       # Python 代理配置主脚本
+├── setup_proxy.sh       # macOS/Linux Bash 代理配置脚本
 └── setup_proxy.ps1      # PowerShell 代理配置脚本
 ```
 

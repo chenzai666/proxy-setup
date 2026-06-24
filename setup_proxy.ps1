@@ -11,6 +11,14 @@ $PROXY_HOST = "127.0.0.1"
 $NO_PROXY = "localhost,127.0.0.1,::1"
 $ANTHROPIC_BASE_URL = ""
 
+$CF_TRACE_TARGETS = @(
+    @{Name="Claude Web";     URL="https://claude.ai/cdn-cgi/trace"},
+    @{Name="Claude Console"; URL="https://console.anthropic.com/cdn-cgi/trace"},
+    @{Name="Anthropic API";  URL="https://api.anthropic.com/cdn-cgi/trace"},
+    @{Name="ChatGPT Web";    URL="https://chatgpt.com/cdn-cgi/trace"},
+    @{Name="OpenAI API";     URL="https://api.openai.com/cdn-cgi/trace"}
+)
+
 $PROXY_BLOCK_START = "# >>> proxy-config start <<<"
 $PROXY_BLOCK_END   = "# >>> proxy-config end <<<"
 
@@ -328,6 +336,63 @@ function Get-ExitIP($http_port) {
     return @("", "")
 }
 
+function Get-CfTrace($http_port, $url) {
+    $proxy = "http://${PROXY_HOST}:${http_port}"
+    try {
+        return curl.exe -s --proxy $proxy --connect-timeout 8 --max-time 12 $url 2>&1
+    } catch {
+        return ""
+    }
+}
+
+function Parse-CfTrace($output) {
+    $trace = @{}
+    if (-not $output) { return $trace }
+    foreach ($line in ($output -split "`r?`n")) {
+        if ($line -match "=") {
+            $parts = $line -split "=", 2
+            $trace[$parts[0].Trim()] = $parts[1].Trim()
+        }
+    }
+    return $trace
+}
+
+function Test-CfTraceExitIPs($http_port, [bool]$ShowRaw = $true) {
+    bold "  出口 IP 检测（通过 Cloudflare trace）:"
+    foreach ($target in $CF_TRACE_TARGETS) {
+        $output = Get-CfTrace $http_port $target.URL
+        if (-not $output -or $output -notmatch "=") {
+            warn "  $($target.Name): 无法访问 $($target.URL)"
+            continue
+        }
+
+        $trace = Parse-CfTrace $output
+        $ip = $trace["ip"]
+        $loc = $trace["loc"]
+        $colo = $trace["colo"]
+        $warp = $trace["warp"]
+
+        if ($ip) {
+            $parts = @("$($target.Name) 出口 IP: $ip")
+            if ($loc) { $parts += "地区: $loc" }
+            if ($colo) { $parts += "接入: $colo" }
+            if ($warp -and $warp -ne "off") { $parts += "WARP: $warp" }
+            ok ($parts -join " | ")
+        } else {
+            warn "  $($target.Name): trace 返回异常"
+        }
+
+        if ($ShowRaw) {
+            Write-Host ""
+            Write-Host "  --- $($target.Name) trace 原始输出 ---"
+            foreach ($line in ($output -split "`r?`n")) {
+                Write-Host "  $line"
+            }
+            Write-Host "  $( '-' * 52 )"
+        }
+    }
+}
+
 function Test-FullConnectivity($http_port) {
     bold ""
     bold "  全面连通性测试 (端口 $http_port)"
@@ -376,6 +441,9 @@ function Test-FullConnectivity($http_port) {
         if ($region) { ok "出口 IP: $ip  ($region)" }
         else { ok "出口 IP: $ip" }
     }
+
+    Write-Host "  $( '-' * 45 )"
+    Test-CfTraceExitIPs $http_port $false
 }
 
 function Test-ProxyConnectivity($http_port) {
@@ -825,6 +893,7 @@ function Show-Menu {
     Write-Host "  5) 全链路测试 (OpenAI + Anthropic)"
     Write-Host "  6) 查看当前代理配置"
     Write-Host "  7) 禁用 Windows 智能DNS"
+    Write-Host "  8) 检测出口 IP (Claude + OpenAI cf-trace)"
     Write-Host "  0) 退出"
     Write-Host ""
 }
@@ -837,7 +906,7 @@ function Main {
 
     while ($true) {
         Show-Menu
-        $choice = Read-Host "请选择 [0-7]"
+        $choice = Read-Host "请选择 [0-8]"
 
         switch ($choice) {
             "0" { Write-Host "退出"; break }
@@ -907,6 +976,14 @@ function Main {
             }
             "7" {
                 Show-SmartDNSMenu
+            }
+            "8" {
+                $hp, $null = Auto-DetectPorts
+                bold ""
+                bold "  正在通过代理端口 $hp 检测出口 IP ..."
+                Write-Host "  $( '-' * 52 )"
+                Test-CfTraceExitIPs $hp $true
+                ok "检测完成"
             }
             default {
                 warn "无效选项，请重新输入"

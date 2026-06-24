@@ -16,6 +16,14 @@ HOST="127.0.0.1"
 NO_PROXY="localhost,127.0.0.1,::1"
 ANTHROPIC_BASE_URL=""   # 中转地址，留空则不写入
 
+CF_TRACE_TARGETS=(
+    "Claude Web|https://claude.ai/cdn-cgi/trace"
+    "Claude Console|https://console.anthropic.com/cdn-cgi/trace"
+    "Anthropic API|https://api.anthropic.com/cdn-cgi/trace"
+    "ChatGPT Web|https://chatgpt.com/cdn-cgi/trace"
+    "OpenAI API|https://api.openai.com/cdn-cgi/trace"
+)
+
 PROXY_BLOCK_START="# >>> proxy-config start <<<"
 PROXY_BLOCK_END="# >>> proxy-config end <<<"
 # ───────────────────────────────────────────────────────────────
@@ -355,22 +363,44 @@ full_connectivity_test() {
 
     # 用 Cloudflare trace 检测出口 IP（Claude + OpenAI）
     printf "  %s\n" "──────────────────────────────────────────────────"
+    check_cf_trace_exit_ips "$hp" "false"
+}
+
+check_cf_trace_exit_ips() {
+    local hp=$1
+    local show_raw=${2:-true}
     bold "  出口 IP 检测（通过 Cloudflare trace）:"
-    for svc_url in "Claude:https://claude.ai/cdn-cgi/trace" "OpenAI:https://chat.openai.com/cdn-cgi/trace"; do
-        local svc="${svc_url%%:*}"
-        local trace_url="${svc_url##*:}"
-        local trace_out ip colo warp
+    for svc_url in "${CF_TRACE_TARGETS[@]}"; do
+        local svc="${svc_url%%|*}"
+        local trace_url="${svc_url#*|}"
+        local trace_out ip loc colo warp
         trace_out=$(curl -s --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 12 "$trace_url" 2>/dev/null || echo "")
         if [[ -n "$trace_out" && "$trace_out" == *"="* ]]; then
             ip=$(echo "$trace_out" | grep -E "^ip=" | head -1 | cut -d'=' -f2)
+            loc=$(echo "$trace_out" | grep -E "^loc=" | head -1 | cut -d'=' -f2)
             colo=$(echo "$trace_out" | grep -E "^colo=" | head -1 | cut -d'=' -f2)
             warp=$(echo "$trace_out" | grep -E "^warp=" | head -1 | cut -d'=' -f2)
-            local parts=("$svc: $ip")
+            local parts=("$svc 出口 IP: $ip")
+            [[ -n "$loc" ]] && parts+=("地区: $loc")
             [[ -n "$colo" ]] && parts+=("接入: $colo")
             [[ -n "$warp" && "$warp" != "off" ]] && parts+=("WARP: $warp")
-            ok "$(IFS=' | '; echo "${parts[*]}")"
+            local joined="${parts[0]}"
+            local i
+            for ((i = 1; i < ${#parts[@]}; i++)); do
+                joined+=" | ${parts[$i]}"
+            done
+            ok "$joined"
+
+            if [[ "$show_raw" == "true" ]]; then
+                echo ""
+                echo "  --- $svc trace 原始输出 ---"
+                echo "$trace_out" | while IFS= read -r line; do
+                    echo "  $line"
+                done
+                printf "  %s\n" "──────────────────────────────────────────────────────"
+            fi
         else
-            warn "  $svc: 无法获取（代理可能未连外网）"
+            warn "  $svc: 无法访问 $trace_url"
         fi
     done
 }
@@ -496,31 +526,7 @@ main() {
                 bold ""
                 bold "  正在通过代理端口 $hp 检测出口 IP ..."
                 printf "  %s\n" "──────────────────────────────────────────────────────"
-                for svc_url in "Claude:https://claude.ai/cdn-cgi/trace" "OpenAI:https://chat.openai.com/cdn-cgi/trace"; do
-                    local svc="${svc_url%%:*}"
-                    local trace_url="${svc_url##*:}"
-                    local trace_out
-                    trace_out=$(curl -s --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 12 "$trace_url" 2>/dev/null || echo "")
-                    if [[ -n "$trace_out" && "$trace_out" == *"="* ]]; then
-                        local ip colo warp
-                        ip=$(echo "$trace_out" | grep -E "^ip=" | head -1 | cut -d'=' -f2)
-                        colo=$(echo "$trace_out" | grep -E "^colo=" | head -1 | cut -d'=' -f2)
-                        warp=$(echo "$trace_out" | grep -E "^warp=" | head -1 | cut -d'=' -f2)
-                        printf "  \033[32m[OK]\033[0m %s 出口 IP: %s" "$svc" "$ip"
-                        [[ -n "$colo" ]] && printf "  |  接入: %s" "$colo"
-                        [[ -n "$warp" && "$warp" != "off" ]] && printf "  |  WARP: %s" "$warp"
-                        printf "\n"
-                        # 显示原始 trace 输出
-                        echo ""
-                        echo "  --- $svc trace 原始输出 ---"
-                        echo "$trace_out" | while IFS= read -r line; do
-                            echo "  $line"
-                        done
-                        printf "  %s\n" "──────────────────────────────────────────────────────"
-                    else
-                        warn "  $svc: 无法访问 $trace_url"
-                    fi
-                done
+                check_cf_trace_exit_ips "$hp" "true"
                 ok "检测完成"
                 ;;
             8)

@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import json
+import ipaddress
 import subprocess
 import shutil
 import platform
@@ -991,114 +992,186 @@ def _nslookup_all(domain: str, servers: list[tuple[str, str]]):
     return results
 
 
+def _is_private_or_local_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        return False
+
+
+def _classify_dns_server(value: str) -> str:
+    known = {
+        "223.5.5.5": "AliDNS(CN)",
+        "223.6.6.6": "AliDNS(CN)",
+        "119.29.29.29": "DNSPod(CN)",
+        "180.76.76.76": "BaiduDNS(CN)",
+        "114.114.114.114": "114DNS(CN)",
+        "1.1.1.1": "Cloudflare",
+        "1.0.0.1": "Cloudflare",
+        "8.8.8.8": "Google",
+        "8.8.4.4": "Google",
+        "9.9.9.9": "Quad9",
+        "208.67.222.222": "OpenDNS",
+    }
+    if value in known:
+        return known[value]
+    if _is_private_or_local_ip(value):
+        return "private/local"
+    return "public/unknown"
+
+
+def _get_system_dns_servers() -> list[str]:
+    servers = []
+    if IS_WINDOWS:
+        ps = shutil.which("powershell") or shutil.which("powershell.exe")
+        if ps:
+            try:
+                script = (
+                    "Get-DnsClientServerAddress -AddressFamily IPv4,IPv6 "
+                    "| Where-Object {$_.ServerAddresses.Count -gt 0} "
+                    "| Select-Object -ExpandProperty ServerAddresses "
+                    "| ConvertTo-Json -Compress"
+                )
+                r = subprocess.run(
+                    [ps, "-NoProfile", "-Command", script],
+                    capture_output=True, text=True, timeout=8,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+                if r.stdout.strip():
+                    data = json.loads(r.stdout)
+                    if isinstance(data, str):
+                        servers = [data]
+                    elif isinstance(data, list):
+                        servers = [str(x) for x in data if x]
+            except Exception:
+                pass
+    else:
+        try:
+            for line in Path("/etc/resolv.conf").read_text(encoding="utf-8", errors="ignore").splitlines():
+                m = re.match(r"^\s*nameserver\s+(\S+)", line)
+                if m:
+                    servers.append(m.group(1))
+        except Exception:
+            pass
+
+    unique = []
+    for server in servers:
+        if server not in unique:
+            unique.append(server)
+    return unique
+
+
+def _proxy_domain_resolution_ok(http_port: int) -> bool:
+    output = _curl_proxy(http_port, "https://cloudflare.com/cdn-cgi/trace", max_time=10)
+    trace = _parse_cf_trace(output)
+    return bool(trace.get("ip"))
+
+
 def check_dns_leak():
-    """检测 DNS 是否泄漏 — CDN 域名解析结果对比法"""
-    bold("\n  正在检测 DNS 泄漏 (CDN 解析对比)...")
+    """检测 DNS 泄漏风险 — 分项风险画像法。"""
+    bold("\n  正在检测 DNS 泄漏风险...")
     print(f"  {'─' * 55}")
 
-    TEST_DOMAIN = "google.com"
-    # (标签, DNS服务器)  — server 为空表示用系统 DNS
-    servers = [
-        ("系统 DNS",    ""),           # 系统当前 DNS
-        ("Cloudflare",  "1.1.1.1"),    # 境外参考
-        ("Google DNS",  "8.8.8.8"),    # 境外参考
-        ("AliDNS(CN)",  "223.5.5.5"),  # 国内参考
-    ]
+    risk = 0
+    uncertain = 0
 
-    ok_count = 0
-    total_checks = 0
+    if IS_WINDOWS:
+        info("Windows DNS 策略状态:")
+        smart_status = check_smart_dns_status()
+        for desc, (current, target, disabled) in smart_status.items():
+            current_text = "未设置" if current is None else str(current)
+            if disabled:
+                ok(f"  {desc}: 已按推荐禁用 ({current_text})")
+            elif "mDNS" in desc or "LLMNR" in desc:
+                info(f"  {desc}: 未禁用 ({current_text}) — 可选项，保留局域网发现时可忽略")
+                uncertain += 0.5
+            else:
+                warn(f"  {desc}: 未禁用 ({current_text}) — 可能向多个网卡并行发起 DNS 查询")
+                risk += 1
 
-    # ── 1. 核心: DNS 解析 IP 对比 ──
-    info(f"解析 {TEST_DOMAIN} — 对比系统 DNS vs 公网 DNS 的返回结果 ...")
     print()
-    results = _nslookup_all(TEST_DOMAIN, servers)
-    total_checks += 1
-
-    sys_ips = set(results.get("系统 DNS", []))
-    cf_ips  = set(results.get("Cloudflare", []))
-    gg_ips  = set(results.get("Google DNS", []))
-    ali_ips = set(results.get("AliDNS(CN)", []))
-
-    if not sys_ips:
-        # 系统 DNS 失败 → DNS 可能被代理拦截
-        info("系统 DNS 无法解析 — DNS 查询可能被代理拦截 ✓")
-        ok_count += 1
-    elif not ali_ips and not cf_ips:
-        # 所有公网 DNS 都失败 → 网络环境特殊，跳过对比
-        info("公网 DNS 均不可达，跳过 IP 对比")
-        ok_count += 0.5
+    info("系统 DNS 服务器:")
+    dns_servers = _get_system_dns_servers()
+    if dns_servers:
+        for server in dns_servers:
+            label = _classify_dns_server(server)
+            if label.endswith("(CN)"):
+                warn(f"  {server:<39} {label} — 代理场景下泄漏风险较高")
+                risk += 1
+            elif label in ("Cloudflare", "Google", "Quad9", "OpenDNS", "public/unknown"):
+                warn(f"  {server:<39} {label} — 系统会直连公网 DNS")
+                risk += 0.5
+            else:
+                info(f"  {server:<39} {label}")
     else:
-        # 境外 IP 集合 = Cloudflare + Google 的并集
-        foreign_ips = cf_ips | gg_ips
-        # 国内 IP 集合 = AliDNS
-        china_ips = ali_ips
+        warn("  未能读取系统 DNS 服务器")
+        uncertain += 1
 
-        sys_vs_foreign = len(sys_ips & foreign_ips) if foreign_ips else 0
-        sys_vs_china   = len(sys_ips & china_ips) if china_ips else 0
+    print()
+    TEST_DOMAIN = "cloudflare.com"
+    direct_servers = [
+        ("Cloudflare", "1.1.1.1"),
+        ("Google DNS", "8.8.8.8"),
+        ("Quad9", "9.9.9.9"),
+        ("AliDNS(CN)", "223.5.5.5"),
+    ]
+    info(f"直连公网 DNS 探测 ({TEST_DOMAIN}) ...")
+    direct_results = _nslookup_all(TEST_DOMAIN, direct_servers)
+    reachable_public = [label for label, ips in direct_results.items() if ips]
+    if reachable_public:
+        warn(f"系统可直连公网 DNS: {', '.join(reachable_public)}")
+        info("  说明: HTTP_PROXY/HTTPS_PROXY 不会接管系统 DNS；需要 TUN、系统级代理或应用使用远程 DNS。")
+        risk += 1
+    else:
+        ok("直连公网 DNS 未返回结果 — 当前网络可能拦截了直接 DNS 查询")
 
-        print(f"\n  {'─' * 55}")
-        info(f"系统 DNS 与 境外CDN IP 重合: {sys_vs_foreign}")
-        info(f"系统 DNS 与 国内CDN IP 重合: {sys_vs_china}")
+    print()
+    compare_domain = "google.com"
+    info(f"CDN 解析辅助对比 ({compare_domain}) ...")
+    compare_results = _nslookup_all(compare_domain, [
+        ("系统 DNS", ""),
+        ("Cloudflare", "1.1.1.1"),
+        ("Google DNS", "8.8.8.8"),
+        ("AliDNS(CN)", "223.5.5.5"),
+    ])
+    sys_ips = set(compare_results.get("系统 DNS", []))
+    foreign_ips = set(compare_results.get("Cloudflare", [])) | set(compare_results.get("Google DNS", []))
+    china_ips = set(compare_results.get("AliDNS(CN)", []))
+    sys_vs_foreign = len(sys_ips & foreign_ips) if foreign_ips else 0
+    sys_vs_china = len(sys_ips & china_ips) if china_ips else 0
+    info(f"  系统 DNS 与境外参考重合: {sys_vs_foreign}")
+    info(f"  系统 DNS 与国内参考重合: {sys_vs_china}")
+    if sys_ips and sys_vs_china > 0 and sys_vs_foreign == 0:
+        warn("  辅助判断: 系统 DNS 更像本地/国内解析结果")
+        risk += 1
+    elif sys_ips and sys_vs_foreign > 0 and sys_vs_china == 0:
+        ok("  辅助判断: 系统 DNS 更像境外解析结果")
+    elif sys_ips:
+        info("  辅助判断: 解析结果混合或独立，仅作参考")
+        uncertain += 0.5
+    else:
+        info("  系统 DNS 无解析结果，可能被拦截或网络环境特殊")
+        uncertain += 0.5
 
-        if sys_vs_china > 0 and sys_vs_foreign == 0:
-            warn("DNS 泄漏风险 — 系统 DNS 返回国内 CDN IP，未经代理")
-        elif sys_vs_foreign > 0 and sys_vs_china == 0:
-            ok("DNS 安全 — 系统 DNS 返回境外 CDN IP，经过代理 ✓")
-            ok_count += 1
-        elif sys_vs_foreign > 0 and sys_vs_china > 0:
-            # 双栈环境，部分泄漏
-            warn("DNS 部分泄漏 — 同时出现国内和境外 IP")
-            ok_count += 0.5
-        else:
-            # IP 都不重合 — 代理可能用了独立 DNS
-            info("系统 DNS 返回独立 IP（可能代理自建 DNS）— 无法判断")
-            ok_count += 0.5
-
-    # ── 2. 代理端口 + HTTP 连通性 ──
+    print()
     http_port, socks_port = auto_detect_ports()
-    import urllib.request, ssl, socket as _socket
-
-    info(f"\n代理端口 TCP 检测 ({http_port} / {socks_port}) ...")
-    total_checks += 1
-
-    http_alive = False
-    socks_alive = False
-    try:
-        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM); s.settimeout(3)
-        if s.connect_ex(("127.0.0.1", http_port)) == 0: http_alive = True
-        s.close()
-    except Exception: pass
-    try:
-        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM); s.settimeout(3)
-        if s.connect_ex(("127.0.0.1", socks_port)) == 0: socks_alive = True
-        s.close()
-    except Exception: pass
-
-    if http_alive:
-        try:
-            ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
-            ph = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{http_port}", "https": f"http://127.0.0.1:{http_port}"})
-            opener = urllib.request.build_opener(ph, urllib.request.HTTPSHandler(context=ctx))
-            req = urllib.request.Request("https://www.google.com", method="HEAD")
-            resp = opener.open(req, timeout=10)
-            ok(f"代理 HTTP 连通正常 (google, {resp.status}) ✓")
-            ok_count += 1
-        except Exception as e:
-            warn(f"代理 HTTP 不通: {e}")
-    elif socks_alive:
-        ok(f"代理 SOCKS5 活跃 ({socks_port}) — 但不能用于 HTTP 代理检测")
-        ok_count += 0.5
+    info(f"代理域名访问检测 ({http_port} / {socks_port}) ...")
+    if _proxy_domain_resolution_ok(http_port):
+        ok("代理可按域名访问 Cloudflare trace")
     else:
-        warn("代理端口未响应 — 请确认代理客户端已启动")
+        warn("代理按域名访问失败 — 代理端口或节点 DNS 可能异常")
+        risk += 1
 
-    # ── 汇总 ──
     print(f"\n  {'─' * 55}")
-    if ok_count >= 2:
-        ok(f"DNS 泄漏检测通过 ({ok_count}/{total_checks}) ✓")
-    elif ok_count >= 1:
-        warn(f"DNS 存在可疑 ({ok_count}/{total_checks}) — 建议用浏览器访问 ipleak.net/dnsleaktest.com 复检")
+    if risk == 0:
+        ok("未发现明确 DNS 泄漏风险")
+    elif risk <= 2:
+        warn(f"发现 DNS 泄漏风险信号: {risk:g} 项，建议按提示复核")
     else:
-        warn("DNS 泄漏风险较高 — 建议检查代理客户端设置")
+        warn(f"DNS 泄漏风险较高: {risk:g} 项，建议启用 TUN/系统代理并配置远程 DNS")
+    if uncertain:
+        info(f"另有 {uncertain:g} 项无法明确判断。CLI 检测不能替代浏览器 DNS leak test。")
 
     info("手动验证网站:")
     info("  • https://dnsleaktest.com   — DNS 泄漏检测")

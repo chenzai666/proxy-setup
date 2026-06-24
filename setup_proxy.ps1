@@ -725,19 +725,15 @@ function Restore-SmartDNS {
 function Test-DNSLeak {
     <#
     .SYNOPSIS
-        检测 DNS 是否泄漏 — CDN 域名解析结果对比法
-        核心逻辑: 用系统 DNS 和多个公网 DNS 解析同一 CDN 域名，
-        比较返回 IP 的地理归属，判断 DNS 是否经过代理
+        检测 DNS 泄漏风险 — 分项风险画像法
     #>
     bold ""
-    bold "  正在检测 DNS 泄漏 (CDN 解析对比)..."
+    bold "  正在检测 DNS 泄漏风险..."
     Write-Host "  $( '-' * 55 )"
 
-    $TEST_DOMAIN = "google.com"
-    $okCount = 0
-    $totalChecks = 2
+    $risk = 0.0
+    $uncertain = 0.0
 
-    # ── helper: 解析 nslookup 输出中的 IP ──
     function Parse-NSLookupIPs($output) {
         $ips = @()
         $inAnswer = $false
@@ -758,12 +754,13 @@ function Test-DNSLeak {
         return $ips
     }
 
-    # ── helper: 用指定 DNS 服务器解析域名 ──
     function Resolve-DNS($domain, $server, $label) {
         try {
-            $args = @("nslookup", $domain)
-            if ($server) { $args += $server }
-            $out = & nslookup $domain $server 2>&1
+            if ($server) {
+                $out = & nslookup $domain $server 2>&1
+            } else {
+                $out = & nslookup $domain 2>&1
+            }
             $ips = Parse-NSLookupIPs $out
             if ($ips.Count -gt 0) {
                 info "  $($label.PadRight(12)) -> $(($ips[0..([Math]::Min(3, $ips.Count-1))] -join ', '))$(' ...' * ($ips.Count -gt 4))"
@@ -777,93 +774,157 @@ function Test-DNSLeak {
         }
     }
 
-    # ── 1. 核心: CDN 域名解析 IP 对比 ──
-    info "解析 $TEST_DOMAIN — 对比系统 DNS vs 公网 DNS 的返回结果 ..."
-    Write-Host ""
+    function Test-PrivateOrLocalIP($value) {
+        try {
+            $addr = [System.Net.IPAddress]::Parse($value)
+            $bytes = $addr.GetAddressBytes()
+            if ($addr.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+                return ($bytes[0] -eq 10) -or
+                    ($bytes[0] -eq 127) -or
+                    ($bytes[0] -eq 169 -and $bytes[1] -eq 254) -or
+                    ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+                    ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+            }
+            if ($addr.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) {
+                return $addr.IsIPv6LinkLocal -or $addr.IsIPv6SiteLocal -or $addr.Equals([System.Net.IPAddress]::IPv6Loopback)
+            }
+        } catch {}
+        return $false
+    }
 
-    $sys_ips  = @(Resolve-DNS $TEST_DOMAIN "" "系统 DNS")
-    $cf_ips   = @(Resolve-DNS $TEST_DOMAIN "1.1.1.1" "Cloudflare")
-    $gg_ips   = @(Resolve-DNS $TEST_DOMAIN "8.8.8.8" "Google DNS")
-    $ali_ips  = @(Resolve-DNS $TEST_DOMAIN "223.5.5.5" "AliDNS(CN)")
+    function Get-DNSServerLabel($server) {
+        $known = @{
+            "223.5.5.5" = "AliDNS(CN)"
+            "223.6.6.6" = "AliDNS(CN)"
+            "119.29.29.29" = "DNSPod(CN)"
+            "180.76.76.76" = "BaiduDNS(CN)"
+            "114.114.114.114" = "114DNS(CN)"
+            "1.1.1.1" = "Cloudflare"
+            "1.0.0.1" = "Cloudflare"
+            "8.8.8.8" = "Google"
+            "8.8.4.4" = "Google"
+            "9.9.9.9" = "Quad9"
+            "208.67.222.222" = "OpenDNS"
+        }
+        if ($known.ContainsKey($server)) { return $known[$server] }
+        if (Test-PrivateOrLocalIP $server) { return "private/local" }
+        return "public/unknown"
+    }
 
-    if ($sys_ips.Count -eq 0) {
-        info "系统 DNS 无法解析 — DNS 查询可能被代理拦截"
-        $okCount++
-    } elseif ($cf_ips.Count -eq 0 -and $ali_ips.Count -eq 0) {
-        info "公网 DNS 均不可达，跳过 IP 对比"
-        $okCount += 0.5
-    } else {
-        $foreign_ips = @($cf_ips) + @($gg_ips) | Select-Object -Unique
-        $china_ips   = @($ali_ips)
-
-        $sys_vs_foreign = ($sys_ips | Where-Object { $foreign_ips -contains $_ }).Count
-        $sys_vs_china   = ($sys_ips | Where-Object { $china_ips -contains $_ }).Count
-
-        Write-Host ""
-        Write-Host "  $( '-' * 55 )"
-        info "系统 DNS 与 境外CDN IP 重合: $sys_vs_foreign"
-        info "系统 DNS 与 国内CDN IP 重合: $sys_vs_china"
-
-        if ($sys_vs_china -gt 0 -and $sys_vs_foreign -eq 0) {
-            warn "DNS 泄漏风险 — 系统 DNS 返回国内 CDN IP，未经代理"
-        } elseif ($sys_vs_foreign -gt 0 -and $sys_vs_china -eq 0) {
-            ok "DNS 安全 — 系统 DNS 返回境外 CDN IP，经过代理"
-            $okCount++
-        } elseif ($sys_vs_foreign -gt 0 -and $sys_vs_china -gt 0) {
-            warn "DNS 部分泄漏 — 同时出现国内和境外 IP"
-            $okCount += 0.5
+    info "Windows DNS 策略状态:"
+    $smartStatus = Check-SmartDNSStatus
+    foreach ($item in $smartStatus) {
+        $name = $item.Desc
+        $currentText = if ($item.Current -eq -1) { "未设置" } else { "$($item.Current)" }
+        if ($item.IsDisabled) {
+            ok "  $name`: 已按推荐禁用 ($currentText)"
+        } elseif ($name -match "mDNS|LLMNR") {
+            info "  $name`: 未禁用 ($currentText) — 可选项，保留局域网发现时可忽略"
+            $uncertain += 0.5
         } else {
-            info "系统 DNS 返回独立 IP（可能代理自建 DNS）— 无法判断"
-            $okCount += 0.5
+            warn "  $name`: 未禁用 ($currentText) — 可能向多个网卡并行发起 DNS 查询"
+            $risk += 1
         }
     }
 
-    # ── 2. 代理端口检测 ──
+    Write-Host ""
+    info "系统 DNS 服务器:"
+    $dnsServers = @()
+    try {
+        $dnsServers = Get-DnsClientServerAddress -AddressFamily IPv4,IPv6 -ErrorAction Stop |
+            Where-Object { $_.ServerAddresses.Count -gt 0 } |
+            ForEach-Object { $_.ServerAddresses } |
+            Select-Object -Unique
+    } catch {}
+    if ($dnsServers.Count -gt 0) {
+        foreach ($server in $dnsServers) {
+            $label = Get-DNSServerLabel $server
+            if ($label -like "*(CN)") {
+                warn ("  {0,-39} {1} — 代理场景下泄漏风险较高" -f $server, $label)
+                $risk += 1
+            } elseif ($label -in @("Cloudflare","Google","Quad9","OpenDNS","public/unknown")) {
+                warn ("  {0,-39} {1} — 系统会直连公网 DNS" -f $server, $label)
+                $risk += 0.5
+            } else {
+                info ("  {0,-39} {1}" -f $server, $label)
+            }
+        }
+    } else {
+        warn "  未能读取系统 DNS 服务器"
+        $uncertain += 1
+    }
+
+    Write-Host ""
+    $directDomain = "cloudflare.com"
+    info "直连公网 DNS 探测 ($directDomain) ..."
+    $directResults = @{}
+    foreach ($pair in @(
+        @("Cloudflare", "1.1.1.1"),
+        @("Google DNS", "8.8.8.8"),
+        @("Quad9", "9.9.9.9"),
+        @("AliDNS(CN)", "223.5.5.5")
+    )) {
+        $directResults[$pair[0]] = @(Resolve-DNS $directDomain $pair[1] $pair[0])
+    }
+    $reachablePublic = @($directResults.Keys | Where-Object { $directResults[$_].Count -gt 0 })
+    if ($reachablePublic.Count -gt 0) {
+        warn "系统可直连公网 DNS: $($reachablePublic -join ', ')"
+        info "  说明: HTTP_PROXY/HTTPS_PROXY 不会接管系统 DNS；需要 TUN、系统级代理或应用使用远程 DNS。"
+        $risk += 1
+    } else {
+        ok "直连公网 DNS 未返回结果 — 当前网络可能拦截了直接 DNS 查询"
+    }
+
+    Write-Host ""
+    $compareDomain = "google.com"
+    info "CDN 解析辅助对比 ($compareDomain) ..."
+    $sys_ips = @(Resolve-DNS $compareDomain "" "系统 DNS")
+    $cf_ips = @(Resolve-DNS $compareDomain "1.1.1.1" "Cloudflare")
+    $gg_ips = @(Resolve-DNS $compareDomain "8.8.8.8" "Google DNS")
+    $ali_ips = @(Resolve-DNS $compareDomain "223.5.5.5" "AliDNS(CN)")
+    $foreign_ips = @($cf_ips) + @($gg_ips) | Select-Object -Unique
+    $china_ips = @($ali_ips)
+    $sys_vs_foreign = ($sys_ips | Where-Object { $foreign_ips -contains $_ }).Count
+    $sys_vs_china = ($sys_ips | Where-Object { $china_ips -contains $_ }).Count
+    info "  系统 DNS 与境外参考重合: $sys_vs_foreign"
+    info "  系统 DNS 与国内参考重合: $sys_vs_china"
+    if ($sys_ips.Count -gt 0 -and $sys_vs_china -gt 0 -and $sys_vs_foreign -eq 0) {
+        warn "  辅助判断: 系统 DNS 更像本地/国内解析结果"
+        $risk += 1
+    } elseif ($sys_ips.Count -gt 0 -and $sys_vs_foreign -gt 0 -and $sys_vs_china -eq 0) {
+        ok "  辅助判断: 系统 DNS 更像境外解析结果"
+    } elseif ($sys_ips.Count -gt 0) {
+        info "  辅助判断: 解析结果混合或独立，仅作参考"
+        $uncertain += 0.5
+    } else {
+        info "  系统 DNS 无解析结果，可能被拦截或网络环境特殊"
+        $uncertain += 0.5
+    }
+
+    Write-Host ""
     $ports = Auto-DetectPorts
     $httpPort = $ports[0]
     $socksPort = $ports[1]
-    Write-Host ""
-    info "代理端口 TCP 检测 ($httpPort / $socksPort) ..."
-
-    $httpAlive = $false; $socksAlive = $false
-    try { $tcp = New-Object Net.Sockets.TcpClient; if ($tcp.ConnectAsync("127.0.0.1", $httpPort).Wait(3000)) { $httpAlive = $true }; $tcp.Close() } catch {}
-    try { $tcp = New-Object Net.Sockets.TcpClient; if ($tcp.ConnectAsync("127.0.0.1", $socksPort).Wait(3000)) { $socksAlive = $true }; $tcp.Close() } catch {}
-
-    if ($httpAlive) {
-        try {
-            $wc = New-Object Net.WebClient
-            $wc.Proxy = New-Object Net.WebProxy("http://127.0.0.1:$httpPort", $true)
-            if ($PSVersionTable.PSVersion.Major -lt 6) {
-                [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-            }
-            $wc.Headers.Add("User-Agent", "proxy-setup-dns-check")
-            $result = $wc.DownloadString("https://www.google.com")
-            if ($result -and $result.Length -gt 100) {
-                ok "代理 HTTP 连通正常 (google, $($result.Length) bytes)"
-                $okCount++
-            } else {
-                warn "代理 HTTP 响应异常"
-            }
-            $wc.Dispose()
-        } catch {
-            warn "代理 HTTP 不通: $_"
-        }
-    } elseif ($socksAlive) {
-        ok "代理 SOCKS5 活跃 ($socksPort) — 但不能用于 HTTP 代理检测"
-        $okCount += 0.5
+    info "代理域名访问检测 ($httpPort / $socksPort) ..."
+    $trace = Parse-CfTrace (Get-CfTrace $httpPort "https://cloudflare.com/cdn-cgi/trace")
+    if ($trace["ip"]) {
+        ok "代理可按域名访问 Cloudflare trace"
     } else {
-        warn "代理端口未响应 — 请确认代理客户端已启动"
+        warn "代理按域名访问失败 — 代理端口或节点 DNS 可能异常"
+        $risk += 1
     }
 
-    # ── 汇总 ──
     Write-Host ""
     Write-Host "  $( '-' * 55 )"
-    if ($okCount -ge 2) {
-        ok "DNS 泄漏检测通过 ($okCount/$totalChecks)"
-    } elseif ($okCount -ge 1) {
-        warn "DNS 存在可疑 ($okCount/$totalChecks) — 建议用浏览器访问 ipleak.net/dnsleaktest.com 复检"
+    if ($risk -eq 0) {
+        ok "未发现明确 DNS 泄漏风险"
+    } elseif ($risk -le 2) {
+        warn "发现 DNS 泄漏风险信号: $risk 项，建议按提示复核"
     } else {
-        warn "DNS 泄漏风险较高 — 建议检查代理客户端设置"
+        warn "DNS 泄漏风险较高: $risk 项，建议启用 TUN/系统代理并配置远程 DNS"
+    }
+    if ($uncertain -gt 0) {
+        info "另有 $uncertain 项无法明确判断。CLI 检测不能替代浏览器 DNS leak test。"
     }
     info "手动验证网站:"
     info "  • https://dnsleaktest.com   — DNS 泄漏检测"

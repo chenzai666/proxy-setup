@@ -163,7 +163,7 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy
 - **1/2/3** — 逐项独立开关
 - **4) 一键禁用推荐项** — 关闭前两项，保留组播（兼顾安全与内网便利）
 - **5) 全部恢复默认** — 删除所有策略键，恢复系统默认
-- **6) 检测 DNS 泄漏** — 通过 nslookup 直接探测公网 DNS (Google/Cloudflare/Quad9/OpenDNS)，验证代理是否拦截了 DNS 查询
+- **6) 检测 DNS 泄漏** — 输出分项风险画像：检查 Windows DNS 策略、系统 DNS 服务器、直连公网 DNS、CDN 解析辅助对比和代理域名访问能力
 
 > 需要**管理员权限**。
 

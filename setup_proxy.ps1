@@ -7,6 +7,7 @@
 
 $DEFAULT_HTTP_PORT   = 7890
 $DEFAULT_SOCKS5_PORT = 7891
+$PORT_SCAN_RADIUS = 10
 $PROXY_HOST = "127.0.0.1"
 $NO_PROXY = "localhost,127.0.0.1,::1"
 $ANTHROPIC_BASE_URL = ""
@@ -37,6 +38,67 @@ function Check-PortListening($port) {
     $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
         Where-Object { $_.LocalAddress -eq "0.0.0.0" -or $_.LocalAddress -eq "127.0.0.1" -or $_.LocalAddress -eq "::" }
     return [bool]$conn
+}
+
+function Get-PortScanCandidates($basePort) {
+    $ports = New-Object System.Collections.Generic.List[int]
+    $seen = @{}
+    for ($offset = 0; $offset -le $PORT_SCAN_RADIUS; $offset++) {
+        foreach ($p in @($basePort - $offset, $basePort + $offset)) {
+            if ($p -lt 1 -or $p -gt 65535 -or $seen.ContainsKey($p)) { continue }
+            $ports.Add([int]$p)
+            $seen[$p] = $true
+        }
+    }
+    return $ports
+}
+
+function Find-ListeningPortNear($basePort, $label) {
+    foreach ($p in (Get-PortScanCandidates $basePort)) {
+        if (Check-PortListening $p) {
+            info "端口扫描: $label 在 $p 监听（基准 $basePort ±$PORT_SCAN_RADIUS）"
+            return [int]$p
+        }
+    }
+    return $null
+}
+
+function Detect-ClashPort {
+    $configs = @()
+    if ($env:APPDATA) {
+        $configs += "$env:APPDATA\clash\config.yaml"
+        $configs += "$env:APPDATA\Clash for Windows\config.yaml"
+        $configs += "$env:APPDATA\clash-verge\config.yaml"
+        $configs += "$env:APPDATA\io.github.clash-verge-rev.clash-verge-rev\config.yaml"
+        $configs += "$env:APPDATA\mihomo-party\config.yaml"
+    }
+    $configs += "$env:USERPROFILE\.config\clash\config.yaml"
+    $configs += "$env:USERPROFILE\.config\mihomo\config.yaml"
+
+    foreach ($cfg in $configs) {
+        if (-not (Test-Path $cfg)) { continue }
+        try {
+            $content = Get-Content $cfg -Raw -Encoding UTF8
+            if ($content -match '(?m)^\s*mixed-port\s*:\s*(\d+)') {
+                $port = [int]$Matches[1]
+                info "检测到 Clash/Mihomo 混合端口: $port  ($cfg)"
+                return @($port, $port)
+            }
+            if ($content -match '(?m)^\s*port\s*:\s*(\d+)') {
+                $port = [int]$Matches[1]
+                $socks_port = $port + 1
+                if ($content -match '(?m)^\s*socks-port\s*:\s*(\d+)') {
+                    $socks_port = [int]$Matches[1]
+                }
+                info "检测到 Clash/Mihomo HTTP 端口: $port  ($cfg)"
+                return @($port, $socks_port)
+            }
+        } catch {}
+    }
+
+    $port = Find-ListeningPortNear $DEFAULT_HTTP_PORT "Clash/Mihomo"
+    if ($port) { return @($port, $port + 1) }
+    return @($DEFAULT_HTTP_PORT, $DEFAULT_SOCKS5_PORT)
 }
 
 function Detect-V2rayNPort {
@@ -76,11 +138,9 @@ function Detect-V2rayNPort {
         }
     }
 
-    foreach ($p in @(10808, 10809, 1080, 7890, 8080)) {
-        if (Check-PortListening $p) {
-            info "端口嗅探: $p 正在监听（混合端口模式）"
-            return @($p, $p)
-        }
+    foreach ($base in @(10808, 1080)) {
+        $p = Find-ListeningPortNear $base "v2rayN"
+        if ($p) { return @($p, $p) }
     }
 
     return @(10808, 10808)
@@ -113,7 +173,7 @@ function Auto-DetectPorts {
     $candidates = @(
         @{Name="v2rayN";   Ports=(Detect-V2rayNPort)},
         @{Name="sing-box"; Ports=(Detect-SingBoxPort)},
-        @{Name="Clash";    Ports=@($DEFAULT_HTTP_PORT, $DEFAULT_SOCKS5_PORT)}
+        @{Name="Clash";    Ports=(Detect-ClashPort)}
     )
 
     foreach ($c in $candidates) {

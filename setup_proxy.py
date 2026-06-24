@@ -17,6 +17,7 @@ from pathlib import Path
 # ─── 配置区（按需修改）───────────────────────────────────────────────
 DEFAULT_HTTP_PORT   = 7890
 DEFAULT_SOCKS5_PORT = 7891
+PORT_SCAN_RADIUS = 10
 HOST = "127.0.0.1"
 
 # 不走代理的地址
@@ -57,7 +58,24 @@ def bold(msg):  print(msg)
 
 # ─── 端口检测 ────────────────────────────────────────────────────────
 
-def detect_clash_port() -> int:
+def port_scan_candidates(base_port: int):
+    seen = set()
+    for offset in range(PORT_SCAN_RADIUS + 1):
+        for port in (base_port - offset, base_port + offset):
+            if 1 <= port <= 65535 and port not in seen:
+                seen.add(port)
+                yield port
+
+
+def find_listening_port_near(base_port: int, label: str):
+    for port in port_scan_candidates(base_port):
+        if check_port_listening(port):
+            info(f"端口扫描: {label} 在 {port} 监听（基准 {base_port} ±{PORT_SCAN_RADIUS}）")
+            return port
+    return None
+
+
+def detect_clash_ports() -> tuple:
     """Mac: 从 Clash/Mihomo 配置文件读取端口"""
     configs = [
         Path.home() / ".config" / "clash" / "config.yaml",
@@ -65,6 +83,15 @@ def detect_clash_port() -> int:
         Path.home() / "Library" / "Application Support" / "ClashX" / "config.yaml",
         Path.home() / "Library" / "Application Support" / "ClashX Pro" / "config.yaml",
     ]
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        configs += [
+            Path(appdata) / "clash" / "config.yaml",
+            Path(appdata) / "Clash for Windows" / "config.yaml",
+            Path(appdata) / "clash-verge" / "config.yaml",
+            Path(appdata) / "io.github.clash-verge-rev.clash-verge-rev" / "config.yaml",
+            Path(appdata) / "mihomo-party" / "config.yaml",
+        ]
     for cfg in configs:
         if cfg.exists():
             try:
@@ -73,15 +100,24 @@ def detect_clash_port() -> int:
                 if m:
                     port = int(m.group(1))
                     info(f"检测到 Clash 混合端口: {port}  ({cfg.parent.parent.parent.name}/{cfg.name})")
-                    return port
+                    return port, port
                 m = re.search(r"^port:\s*(\d+)", content, re.MULTILINE)
                 if m:
                     port = int(m.group(1))
+                    socks_match = re.search(r"^socks-port:\s*(\d+)", content, re.MULTILINE)
+                    socks_port = int(socks_match.group(1)) if socks_match else port + 1
                     info(f"检测到 Clash HTTP 端口: {port}")
-                    return port
+                    return port, socks_port
             except Exception:
                 pass
-    return DEFAULT_HTTP_PORT
+    port = find_listening_port_near(DEFAULT_HTTP_PORT, "Clash/Mihomo")
+    if port:
+        return port, port + 1
+    return DEFAULT_HTTP_PORT, DEFAULT_SOCKS5_PORT
+
+
+def detect_clash_port() -> int:
+    return detect_clash_ports()[0]
 
 
 def detect_v2rayn_port() -> tuple:
@@ -142,10 +178,10 @@ def detect_v2rayn_port() -> tuple:
             except Exception:
                 pass
 
-    # 兜底: 扫描常见 v2rayN 默认端口是否在监听
-    for port in [10808, 10809, 1080, 7890, 8080]:
-        if check_port_listening(port):
-            info(f"端口嗅探: 发现监听端口 {port}")
+    # 兜底: 扫描 v2rayN 默认端口附近是否在监听
+    for base_port in (10808, 1080):
+        port = find_listening_port_near(base_port, "v2rayN")
+        if port:
             # 混合端口模式：同一个端口同时支持 HTTP 和 SOCKS5
             return port, port
 
@@ -208,7 +244,7 @@ def auto_detect_ports() -> tuple:
 
     if IS_MAC:
         candidates = [
-            ("Clash/Mihomo", detect_clash_port(), detect_clash_port() + 1),
+            ("Clash/Mihomo",) + detect_clash_ports(),
             ("v2rayN",) + detect_v2rayn_port(),
             ("sing-box",) + detect_singbox_port(),
         ]
@@ -216,11 +252,11 @@ def auto_detect_ports() -> tuple:
         candidates = [
             ("v2rayN",) + detect_v2rayn_port(),
             ("sing-box",) + detect_singbox_port(),
-            ("Clash", detect_clash_port(), detect_clash_port() + 1),
+            ("Clash",) + detect_clash_ports(),
         ]
     else:
         candidates = [
-            ("Clash", detect_clash_port(), detect_clash_port() + 1),
+            ("Clash",) + detect_clash_ports(),
             ("v2rayN",) + detect_v2rayn_port(),
             ("sing-box",) + detect_singbox_port(),
         ]

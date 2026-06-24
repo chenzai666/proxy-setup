@@ -12,6 +12,7 @@ set -eo pipefail
 # ─── 配置区 ──────────────────────────────────────────────────
 DEFAULT_HTTP_PORT=7890
 DEFAULT_SOCKS5_PORT=7891
+PORT_SCAN_RADIUS=10
 HOST="127.0.0.1"
 NO_PROXY="localhost,127.0.0.1,::1"
 ANTHROPIC_BASE_URL=""   # 中转地址，留空则不写入
@@ -40,8 +41,8 @@ bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
 
 # ─── 端口检测 ────────────────────────────────────────────────
 
-detect_clash_port() {
-    local port=0
+detect_clash_ports() {
+    local port=0 socks_port=0
     local configs=(
         "$HOME/.config/clash/config.yaml"
         "$HOME/.config/mihomo/config.yaml"
@@ -52,12 +53,27 @@ detect_clash_port() {
         [[ -f "$cfg" ]] || continue
         # 优先读 mixed-port
         port=$(grep -E "^mixed-port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
-        [[ -n "$port" ]] && { info "检测到 Clash 混合端口: $port  ($cfg)"; echo "$port"; return; }
+        [[ -n "$port" ]] && { info "检测到 Clash 混合端口: $port  ($cfg)"; echo "$port $port"; return; }
         # 其次读 port (HTTP)
         port=$(grep -E "^port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
-        [[ -n "$port" ]] && { info "检测到 Clash HTTP 端口: $port  ($cfg)"; echo "$port"; return; }
+        if [[ -n "$port" ]]; then
+            socks_port=$(grep -E "^socks-port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
+            [[ -n "$socks_port" ]] || socks_port=$((port+1))
+            info "检测到 Clash HTTP 端口: $port  ($cfg)"
+            echo "$port $socks_port"
+            return
+        fi
     done
-    echo "$DEFAULT_HTTP_PORT"
+    local scanned
+    scanned=$(find_listening_port_near "$DEFAULT_HTTP_PORT" "Clash/Mihomo" || true)
+    [[ -n "$scanned" ]] && { echo "$scanned $((scanned+1))"; return; }
+    echo "$DEFAULT_HTTP_PORT $DEFAULT_SOCKS5_PORT"
+}
+
+detect_clash_port() {
+    local hp sp
+    read -r hp sp <<< "$(detect_clash_ports)"
+    echo "$hp"
 }
 
 detect_v2rayn_port() {
@@ -88,9 +104,9 @@ except: print(sys.argv[2])
         return
     done
     # 没有配置文件，嗅探端口（混合端口模式下 HTTP+SOCKS 共用一个端口）
-    for p in 10808 10809 7890 8080; do
-        if lsof -iTCP:"$p" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
-            info "嗅探到监听端口: ${p}（混合端口模式）"
+    for base_port in 10808 1080; do
+        p=$(find_listening_port_near "$base_port" "v2rayN" || true)
+        if [[ -n "$p" ]]; then
             echo "$p $p"
             return
         fi
@@ -115,6 +131,32 @@ detect_singbox_port() {
 check_port() {
     local port=$1
     lsof -iTCP:"$port" -sTCP:LISTEN -n -P >/dev/null 2>&1
+}
+
+port_scan_candidates() {
+    local base=$1
+    local offset p
+    for ((offset=0; offset<=PORT_SCAN_RADIUS; offset++)); do
+        for p in $((base-offset)) $((base+offset)); do
+            [[ "$p" -ge 1 && "$p" -le 65535 ]] || continue
+            if [[ "$offset" -eq 0 && "$p" -ne "$base" ]]; then
+                continue
+            fi
+            printf '%s\n' "$p"
+        done
+    done | awk '!seen[$0]++'
+}
+
+find_listening_port_near() {
+    local base=$1 label=$2 p
+    while IFS= read -r p; do
+        if check_port "$p"; then
+            info "端口扫描: $label 在 $p 监听（基准 $base ±$PORT_SCAN_RADIUS）"
+            echo "$p"
+            return 0
+        fi
+    done < <(port_scan_candidates "$base")
+    return 1
 }
 
 proxy_port_from_env() {
@@ -148,11 +190,11 @@ auto_detect() {
     fi
 
     # 再检查 Clash。
-    local cp
-    cp=$(detect_clash_port)
+    local cp csp
+    read -r cp csp <<< "$(detect_clash_ports)"
     if check_port "$cp"; then
         ok "Clash 端口 $cp 正在监听"
-        echo "$cp $((cp+1))"
+        echo "$cp $csp"
         return
     fi
 

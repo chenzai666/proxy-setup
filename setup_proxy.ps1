@@ -41,10 +41,11 @@ function Check-PortListening($port) {
 }
 
 function Get-PortScanCandidates($basePort) {
+    $basePort = [int]$basePort
     $ports = New-Object System.Collections.Generic.List[int]
     $seen = @{}
     for ($offset = 0; $offset -le $PORT_SCAN_RADIUS; $offset++) {
-        foreach ($p in @($basePort - $offset, $basePort + $offset)) {
+        foreach ($p in @(($basePort - $offset), ($basePort + $offset))) {
             if ($p -lt 1 -or $p -gt 65535 -or $seen.ContainsKey($p)) { continue }
             $ports.Add([int]$p)
             $seen[$p] = $true

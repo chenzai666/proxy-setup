@@ -127,7 +127,16 @@ proxy_port_from_env() {
 }
 
 auto_detect() {
-    # 先尊重当前终端已经生效的代理端口，避免机器上同时存在 Clash/v2rayN 时选错。
+    # 优先检查 v2rayN。很多 v2rayN 混合端口 HTTP/SOCKS 共用 10808。
+    local vp sp
+    read -r vp sp <<< "$(detect_v2rayn_port)"
+    if check_port "$vp"; then
+        ok "v2rayN 端口 $vp 正在监听"
+        echo "$vp $sp"
+        return
+    fi
+
+    # 再尊重当前终端已经生效的代理端口，作为手动配置/旧会话 fallback。
     local envp
     if envp=$(proxy_port_from_env); then
         if check_port "$envp"; then
@@ -136,15 +145,6 @@ auto_detect() {
             return
         fi
         info "当前环境代理端口 $envp 未监听，继续自动检测"
-    fi
-
-    # 再检查 v2rayN。很多 v2rayN 混合端口 HTTP/SOCKS 共用 10808。
-    local vp sp
-    read -r vp sp <<< "$(detect_v2rayn_port)"
-    if check_port "$vp"; then
-        ok "v2rayN 端口 $vp 正在监听"
-        echo "$vp $sp"
-        return
     fi
 
     # 再检查 Clash。

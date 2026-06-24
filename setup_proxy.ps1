@@ -938,8 +938,7 @@ function Main {
                 Write-Profile $hp $sp
                 Configure-Npm $hp
 
-                Write-Host "  是否同时配置 git 代理？[y/N] " -NoNewline
-                $cfg_git = Read-Host ""
+                $cfg_git = Read-Host "  是否同时配置 git 代理？[y/N]"
                 if ($cfg_git -eq "y") { Configure-Git $hp }
 
                 Test-ProxyConnectivity $hp
@@ -962,8 +961,7 @@ function Main {
                 Write-Profile $hp $sp
                 Configure-Npm $hp
 
-                Write-Host "  是否同时配置 git 代理？[y/N] " -NoNewline
-                $cfg_git = Read-Host ""
+                $cfg_git = Read-Host "  是否同时配置 git 代理？[y/N]"
                 if ($cfg_git -eq "y") { Configure-Git $hp }
 
                 Test-ProxyConnectivity $hp

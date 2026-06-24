@@ -124,6 +124,26 @@ bash setup_proxy.sh
 
 重点看输出中的 `ip`、`loc`、`colo`、`warp` 字段。`loc=US` 代表该域名看到的出口地区是美国。
 
+### 临时清空当前会话代理
+
+如果当前终端残留了失效代理（例如 `127.0.0.1:7897`），会导致 `curl` / `npm` / `git` 优先走旧代理而失败。脚本支持只清空当前会话环境变量，不修改 profile、npm、git 的持久配置。
+
+菜单入口：
+
+- **Bash 版** (`setup_proxy.sh`)：菜单选项 `8`
+- **PowerShell 版** (`setup_proxy.ps1`)：菜单选项 `9`
+- **Python 版** (`setup_proxy.py`)：Windows 菜单选项 `9`（仅影响脚本进程本身）
+
+手动清理命令：
+
+```bash
+unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy NO_PROXY
+```
+
+```powershell
+"http_proxy","https_proxy","all_proxy","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","no_proxy","NO_PROXY" | ForEach-Object { Remove-Item "Env:\$_" -ErrorAction SilentlyContinue }
+```
+
 ### Windows 智能DNS 禁用
 
 启用代理后，Windows 的「智能多宿主名称解析」(Smart Multi-Homed Name Resolution) 可能向所有网卡同时发送 DNS 查询，导致 DNS 泄漏。脚本支持**逐项独立切换**：

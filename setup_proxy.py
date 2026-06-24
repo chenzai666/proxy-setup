@@ -1155,6 +1155,7 @@ def print_menu():
     print("  7) 检测出口 IP (Claude + OpenAI cf-trace)")
     if IS_WINDOWS:
         print("  8) 禁用 Windows 智能DNS")
+        print("  9) 清空当前会话环境变量")
     print("  0) 退出")
     print()
 
@@ -1174,6 +1175,18 @@ def set_env_current_session(http_port: int, socks5_port: int):
     if ANTHROPIC_BASE_URL:
         os.environ["ANTHROPIC_BASE_URL"] = ANTHROPIC_BASE_URL
     ok("当前会话环境变量已设置（仅本终端有效）")
+
+
+def clean_current_env():
+    """清空当前脚本进程中的代理环境变量。"""
+    keys = [
+        "http_proxy", "https_proxy", "all_proxy",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "no_proxy", "NO_PROXY", "ANTHROPIC_BASE_URL",
+    ]
+    for key in keys:
+        os.environ.pop(key, None)
+    ok("当前脚本会话代理环境变量已清空（不修改配置文件）")
 
 
 def show_current_config():
@@ -1231,7 +1244,7 @@ def main():
 
     while True:
         print_menu()
-        choice = input("请选择 [0-8]: ").strip()
+        choice = input("请选择 [0-9]: ").strip()
 
         if choice == "0":
             print("退出")
@@ -1313,6 +1326,10 @@ def main():
 
         elif choice == "8" and IS_WINDOWS:
             smart_dns_menu()
+
+        elif choice == "9" and IS_WINDOWS:
+            clean_current_env()
+            show_current_config()
 
         else:
             warn("无效选项，请重新输入")

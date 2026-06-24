@@ -508,6 +508,20 @@ function Show-CurrentConfig {
     else { warn "代理环境变量未生效，请重新打开终端或运行 . `$PROFILE" }
 }
 
+function Clear-CurrentEnv {
+    $vars = @(
+        "http_proxy", "https_proxy", "all_proxy",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "no_proxy", "NO_PROXY", "ANTHROPIC_BASE_URL"
+    )
+
+    foreach ($v in $vars) {
+        [Environment]::SetEnvironmentVariable($v, $null, "Process")
+        Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
+    }
+    ok "当前 PowerShell 会话代理环境变量已清空（不修改配置文件）"
+}
+
 # ---- 环境变量生效 ----
 
 function Set-EnvCurrentSession($http_port, $socks5_port) {
@@ -894,6 +908,7 @@ function Show-Menu {
     Write-Host "  6) 查看当前代理配置"
     Write-Host "  7) 禁用 Windows 智能DNS"
     Write-Host "  8) 检测出口 IP (Claude + OpenAI cf-trace)"
+    Write-Host "  9) 清空当前会话环境变量"
     Write-Host "  0) 退出"
     Write-Host ""
 }
@@ -906,7 +921,7 @@ function Main {
 
     while ($true) {
         Show-Menu
-        $choice = Read-Host "请选择 [0-8]"
+        $choice = Read-Host "请选择 [0-9]"
 
         switch ($choice) {
             "0" { Write-Host "退出"; break }
@@ -984,6 +999,10 @@ function Main {
                 Write-Host "  $( '-' * 52 )"
                 Test-CfTraceExitIPs $hp $true
                 ok "检测完成"
+            }
+            "9" {
+                Clear-CurrentEnv
+                Show-CurrentConfig
             }
             default {
                 warn "无效选项，请重新输入"

@@ -64,10 +64,10 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 **Windows 固定版本（彻底避开 CDN 缓存漂移）：**
 
 ```powershell
-$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@7e5b22b/setup_proxy.ps1'))
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@dccc12e/setup_proxy.ps1'))
 ```
 
-> `@7e5b22b` 是包含 Claude / OpenAI 出口 IP 检测的固定版本；固定 commit 不会自动更新。
+> `@dccc12e` 是包含 Claude / OpenAI 出口 IP 检测和 macOS Bash 修复的固定版本；固定 commit 不会自动更新。
 
 **Mac / Linux:**
 

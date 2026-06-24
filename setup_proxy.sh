@@ -7,7 +7,7 @@
 #         bash setup_proxy.sh       # 写入配置但不立即生效（需重新开终端）
 # ============================================================
 
-set -euo pipefail
+set -eo pipefail
 
 # ─── 配置区 ──────────────────────────────────────────────────
 DEFAULT_HTTP_PORT=7890
@@ -325,10 +325,10 @@ verify_proxy() {
                     info "无法获取出口 IP（不影响使用）"
                 fi
             fi
-        elif [[ "$code" == "000" ]]; then
-            warn "代理连接失败（curl exitcode=$exitcode），请确认客户端已启动且端口 $hp 正确"
+        elif [[ "${code:-000}" == "000" ]]; then
+            warn "代理连接失败（curl exitcode=${exitcode:-1}），请确认客户端已启动且端口 $hp 正确"
         else
-            warn "代理返回状态码: $code（exitcode=$exitcode），请检查节点是否可用"
+            warn "代理返回状态码: ${code:-000}（exitcode=${exitcode:-1}），请检查节点是否可用"
         fi
     else
         warn "未找到 curl，跳过验证"

@@ -32,10 +32,10 @@ PROXY_BLOCK_END="# >>> proxy-config end <<<"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
-info()  { printf '  \033[0;36m%s\033[0m\n' "$1"; }
-ok()    { printf '  \033[0;32m✓ %s\033[0m\n' "$1"; }
-warn()  { printf '  \033[1;33m⚠ %s\033[0m\n' "$1"; }
-err()   { printf '  \033[0;31m✗ %s\033[0m\n' "$1"; }
+info()  { printf '  \033[0;36m%s\033[0m\n' "$1" >&2; }
+ok()    { printf '  \033[0;32m✓ %s\033[0m\n' "$1" >&2; }
+warn()  { printf '  \033[1;33m⚠ %s\033[0m\n' "$1" >&2; }
+err()   { printf '  \033[0;31m✗ %s\033[0m\n' "$1" >&2; }
 bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
 
 # ─── 端口检测 ────────────────────────────────────────────────
@@ -262,9 +262,12 @@ verify_proxy() {
     if command -v curl >/dev/null 2>&1; then
         local code exitcode
         local output
-        output=$(curl -s -o /dev/null -w "%{exitcode}|%{http_code}|%{ssl_verify_result}" --proxy "http://$HOST:$hp" --connect-timeout 8 "https://api.openai.com" 2>/dev/null || echo "1|000|1")
-        exitcode=$(echo "$output" | cut -d'|' -f1)
-        code=$(echo "$output" | cut -d'|' -f2)
+        if output=$(curl -s -o /dev/null -w "%{http_code}" --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 15 "https://api.openai.com" 2>/dev/null); then
+            exitcode=0
+        else
+            exitcode=$?
+        fi
+        code="${output:-000}"
         if [[ "$exitcode" == "0" ]]; then
             ok "代理可用 (HTTP $code)"
             local exit_data exit_ip exit_region
@@ -309,6 +312,21 @@ verify_proxy() {
     fi
 }
 
+curl_status() {
+    local hp=$1 url=$2
+    local out exitcode code time_total
+    if out=$(curl -s -o /dev/null -w "%{http_code}|%{time_total}" --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 15 "$url" 2>/dev/null); then
+        exitcode=0
+    else
+        exitcode=$?
+    fi
+    code=$(echo "${out:-000|0}" | cut -d'|' -f1)
+    time_total=$(echo "${out:-000|0}" | cut -d'|' -f2)
+    [[ -n "$code" ]] || code="000"
+    [[ -n "$time_total" ]] || time_total="0"
+    echo "$exitcode|$code|$time_total"
+}
+
 full_connectivity_test() {
     local hp=$1
     bold ""
@@ -320,7 +338,7 @@ full_connectivity_test() {
     local all_ok=true
     # OpenAI
     local o_out o_exit o_code o_time
-    o_out=$(curl -s -o /dev/null -w "%{exitcode}|%{http_code}|%{time_total}" --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 15 "https://api.openai.com" 2>/dev/null || echo "1|000|0")
+    o_out=$(curl_status "$hp" "https://api.openai.com")
     o_exit=$(echo "$o_out" | cut -d'|' -f1)
     o_code=$(echo "$o_out" | cut -d'|' -f2)
     o_time=$(echo "$o_out" | cut -d'|' -f3)
@@ -338,7 +356,7 @@ full_connectivity_test() {
 
     # Anthropic
     local a_out a_exit a_code a_time
-    a_out=$(curl -s -o /dev/null -w "%{exitcode}|%{http_code}|%{time_total}" --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 15 "https://api.anthropic.com/v1/models" 2>/dev/null || echo "1|000|0")
+    a_out=$(curl_status "$hp" "https://api.anthropic.com/v1/models")
     a_exit=$(echo "$a_out" | cut -d'|' -f1)
     a_code=$(echo "$a_out" | cut -d'|' -f2)
     a_time=$(echo "$a_out" | cut -d'|' -f3)

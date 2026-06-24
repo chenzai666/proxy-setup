@@ -56,10 +56,18 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 **Windows 加速版（jsdelivr CDN，国内更快）：**
 
 ```powershell
-$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@cd1afa6/setup_proxy.ps1'))
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1'))
 ```
 
-> URL 含 commit hash `@cd1afa6` 锁定版本，彻底避开 CDN 缓存旧文件的问题。
+> 如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1` 清缓存后再运行。
+
+**Windows 固定版本（彻底避开 CDN 缓存漂移）：**
+
+```powershell
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@7e5b22b/setup_proxy.ps1'))
+```
+
+> `@7e5b22b` 是包含 Claude / OpenAI 出口 IP 检测的固定版本；固定 commit 不会自动更新。
 
 **Mac / Linux:**
 

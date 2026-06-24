@@ -90,7 +90,7 @@ except: print(sys.argv[2])
     # 没有配置文件，嗅探端口（混合端口模式下 HTTP+SOCKS 共用一个端口）
     for p in 10808 10809 7890 8080; do
         if lsof -iTCP:"$p" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
-            info "嗅探到监听端口: $p（混合端口模式）"
+            info "嗅探到监听端口: ${p}（混合端口模式）"
             echo "$p $p"
             return
         fi
@@ -117,24 +117,48 @@ check_port() {
     lsof -iTCP:"$port" -sTCP:LISTEN -n -P >/dev/null 2>&1
 }
 
+proxy_port_from_env() {
+    local proxy_value="${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}"
+    [[ -n "$proxy_value" ]] || return 1
+    local port
+    port=$(printf '%s\n' "$proxy_value" | sed -nE 's#^[a-zA-Z0-9+.-]+://[^/:]+:([0-9]+).*#\1#p')
+    [[ -n "$port" ]] || return 1
+    echo "$port"
+}
+
 auto_detect() {
-    # 优先返回正在监听的那个
-    local methods=(
-        "Clash:$(detect_clash_port)"
-        "v2rayN:$(echo $(detect_v2rayn_port))"
-        "sing-box:$(detect_singbox_port)"
-    )
-    # 先检查 clash
-    local cp=$(detect_clash_port)
+    # 先尊重当前终端已经生效的代理端口，避免机器上同时存在 Clash/v2rayN 时选错。
+    local envp
+    if envp=$(proxy_port_from_env); then
+        if check_port "$envp"; then
+            ok "当前环境代理端口 $envp 正在监听"
+            echo "$envp $envp"
+            return
+        fi
+        info "当前环境代理端口 $envp 未监听，继续自动检测"
+    fi
+
+    # 再检查 v2rayN。很多 v2rayN 混合端口 HTTP/SOCKS 共用 10808。
+    local vp sp
+    read -r vp sp <<< "$(detect_v2rayn_port)"
+    if check_port "$vp"; then
+        ok "v2rayN 端口 $vp 正在监听"
+        echo "$vp $sp"
+        return
+    fi
+
+    # 再检查 Clash。
+    local cp
+    cp=$(detect_clash_port)
     if check_port "$cp"; then
         ok "Clash 端口 $cp 正在监听"
         echo "$cp $((cp+1))"
         return
     fi
-    # 再检查 v2rayN
-    read -r vp sp <<< "$(detect_v2rayn_port)"
-    if check_port "$vp"; then
-        ok "v2rayN 端口 $vp 正在监听"
+
+    # 如果 v2rayN 配置给出了端口但没检测到监听，仍优先用它的配置值。
+    if [[ -n "$vp" && "$vp" != "0" ]]; then
+        warn "未检测到监听端口，使用 v2rayN 配置端口"
         echo "$vp $sp"
         return
     fi

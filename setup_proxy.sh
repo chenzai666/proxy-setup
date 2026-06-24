@@ -284,8 +284,7 @@ verify_proxy() {
     local hp=$1
     info "验证代理连通性 (curl -x http://$HOST:$hp https://api.openai.com) ..."
     if command -v curl >/dev/null 2>&1; then
-        local code exitcode
-        local output
+        local code="000" exitcode=1 output=""
         if output=$(curl -s -o /dev/null -w "%{http_code}" --proxy "http://$HOST:$hp" --connect-timeout 8 --max-time 15 "https://api.openai.com" 2>/dev/null); then
             exitcode=0
         else

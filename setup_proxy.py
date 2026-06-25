@@ -963,10 +963,11 @@ def _parse_nslookup_ips(output: str) -> list[str]:
     ips = []
     in_answer = False
     for line in output.splitlines():
-        # 跳过 header 中的地址
-        if "Server:" in line or "DNS request timed out" in line:
+        # 跳过 Server/服务器 行（英文和中文 Windows 本地化均兼容）
+        if re.match(r"^\s*(?:Server|服务器):", line) or "DNS request timed out" in line:
             continue
-        if "Name:" in line:
+        # 中文 Windows 输出 "名称:"，英文输出 "Name:"
+        if re.search(r"(?:Name|名称):", line):
             in_answer = True
             continue
         if in_answer:
@@ -978,6 +979,11 @@ def _parse_nslookup_ips(output: str) -> list[str]:
                     ip = ip.strip()
                     if ip and not ip.startswith("127."):
                         ips.append(ip)
+            elif re.match(r"^\s+[\da-fA-F:.]+\s*$", line):
+                # 多地址续行：后续 IP 没有标签，直接是缩进的 IP
+                ip = line.strip()
+                if ip and not ip.startswith("127."):
+                    ips.append(ip)
     return ips
 
 
@@ -1057,6 +1063,32 @@ def _get_system_dns_servers() -> list[str]:
                         servers = [data]
                     elif isinstance(data, list):
                         servers = [str(x) for x in data if x]
+                    # data is None: PS 返回空管道，ConvertTo-Json 输出 "null"
+            except Exception:
+                pass
+        # 兜底：从 ipconfig /all 解析（PS 方法失败或返回空时）
+        if not servers:
+            try:
+                r = subprocess.run(
+                    ["ipconfig", "/all"], capture_output=True, text=True,
+                    timeout=5, encoding="utf-8", errors="replace",
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+                in_dns = False
+                for line in r.stdout.splitlines():
+                    # 匹配 "DNS Servers" 或中文 "DNS 服务器" 标签行
+                    if re.search(r"DNS\s+(?:Servers?|服务器)", line, re.IGNORECASE):
+                        in_dns = True
+                        m = re.search(r":\s*([\da-fA-F:.]+)\s*$", line)
+                        if m and m.group(1) not in servers:
+                            servers.append(m.group(1))
+                    elif in_dns and re.match(r"^\s{20,}([\da-fA-F:.]+)\s*$", line):
+                        # 续行：同一适配器的额外 DNS 服务器
+                        ip = line.strip()
+                        if ip not in servers:
+                            servers.append(ip)
+                    elif line.strip():
+                        in_dns = False
             except Exception:
                 pass
     else:

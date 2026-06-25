@@ -740,8 +740,10 @@ function Test-DNSLeak {
         $ips = @()
         $inAnswer = $false
         foreach ($line in $output) {
-            if ($line -match "^Server:" -or $line -match "DNS request timed out") { continue }
-            if ($line -match "^Name:") { $inAnswer = $true; continue }
+            # 兼容中文 Windows 本地化：Server/服务器
+            if ($line -match "^(?:Server|服务器):" -or $line -match "DNS request timed out") { continue }
+            # 兼容中文 Windows 本地化：Name/名称
+            if ($line -match "^(?:Name|名称):") { $inAnswer = $true; continue }
             if ($inAnswer) {
                 if ($line -match "Addresses?:\s+(.+)$") {
                     $parts = $Matches[1] -split ",\s*"
@@ -749,6 +751,9 @@ function Test-DNSLeak {
                         if ($p.Trim() -notmatch "^127\.") { $ips += $p.Trim() }
                     }
                 } elseif ($line -match "Address:\s+(\S+)") {
+                    if ($Matches[1] -notmatch "^127\.") { $ips += $Matches[1] }
+                } elseif ($line -match "^\s+([\da-fA-F:.]+)\s*$") {
+                    # 多地址续行：后续 IP 无标签
                     if ($Matches[1] -notmatch "^127\.") { $ips += $Matches[1] }
                 }
             }
@@ -884,8 +889,8 @@ function Test-DNSLeak {
     $cf_ips = @(Resolve-DNS $compareDomain "1.1.1.1" "Cloudflare")
     $gg_ips = @(Resolve-DNS $compareDomain "8.8.8.8" "Google DNS")
     $ali_ips = @(Resolve-DNS $compareDomain "223.5.5.5" "AliDNS(CN)")
-    $foreign_ips = @($cf_ips) + @($gg_ips) | Select-Object -Unique
-    $china_ips = @($ali_ips)
+    $foreign_ips = (@($cf_ips) + @($gg_ips)) | Where-Object { $_ } | Select-Object -Unique
+    $china_ips = @($ali_ips) | Where-Object { $_ }
     $sys_vs_foreign = ($sys_ips | Where-Object { $foreign_ips -contains $_ }).Count
     $sys_vs_china = ($sys_ips | Where-Object { $china_ips -contains $_ }).Count
     info "  系统 DNS 与境外参考重合: $sys_vs_foreign"

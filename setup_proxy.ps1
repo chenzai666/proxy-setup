@@ -204,6 +204,14 @@ function Get-CmdBatPath {
     return "$env:USERPROFILE\.proxy_init.cmd"
 }
 
+function Ensure-CmdProcessorKey {
+    $key = "HKCU:\Software\Microsoft\Command Processor"
+    if (-not (Test-Path $key)) {
+        New-Item -Path $key -Force | Out-Null
+    }
+    return $key
+}
+
 function Build-ProxyBlock($http_port, $socks5_port) {
     $proxy_url = "http://${PROXY_HOST}:${http_port}"
     $socks_url = "socks5://${PROXY_HOST}:${socks5_port}"
@@ -255,6 +263,7 @@ function Setup-CmdAutoRun($http_port, $socks5_port) {
     $bat = Get-CmdBatPath
     $proxy_url = "http://${PROXY_HOST}:${http_port}"
     $socks_url = "socks5://${PROXY_HOST}:${socks5_port}"
+    $key = Ensure-CmdProcessorKey
 
     $batContent = "@echo off`r`n"
     $batContent += "rem >>> proxy-config start <<<`r`n"
@@ -275,7 +284,7 @@ function Setup-CmdAutoRun($http_port, $socks5_port) {
     ok "已写入 CMD 批处理: $bat"
 
     try {
-        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Command Processor" -Name "AutoRun" -Value $bat -Force
+        Set-ItemProperty -Path $key -Name "AutoRun" -Value $bat -Force
         ok "CMD AutoRun 注册表已设置"
     } catch {
         warn "CMD AutoRun 注册表设置失败: $_"
@@ -284,18 +293,21 @@ function Setup-CmdAutoRun($http_port, $socks5_port) {
 
 function Remove-CmdAutoRun {
     $bat = Get-CmdBatPath
+    $key = "HKCU:\Software\Microsoft\Command Processor"
     if (Test-Path $bat) {
         Remove-Item $bat -Force
         ok "已删除 $bat"
     }
-    try {
-        Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Command Processor" -Name "AutoRun" -Force -ErrorAction Stop
-        ok "CMD AutoRun 注册表已删除"
-    } catch {
+    if (Test-Path $key) {
         try {
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Command Processor" -Name "AutoRun" -Value "" -Force
-            ok "CMD AutoRun 注册表已清除"
-        } catch {}
+            Remove-ItemProperty -Path $key -Name "AutoRun" -Force -ErrorAction Stop
+            ok "CMD AutoRun 注册表已删除"
+        } catch {
+            try {
+                Set-ItemProperty -Path $key -Name "AutoRun" -Value "" -Force
+                ok "CMD AutoRun 注册表已清除"
+            } catch {}
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Windows 终端代理一键配置（纯 PowerShell，无需 Python）
     支持 v2rayN / Clash / sing-box
@@ -191,10 +191,12 @@ function Auto-DetectPorts {
 # ---- Shell Profile 配置 ----
 
 function Get-ProfilePath {
-    try {
-        $p = powershell -NoProfile -Command '$PROFILE'
-        if ($p) { return $p }
-    } catch {}
+    # 直接使用当前 PowerShell 会话的 $PROFILE（PS5 和 pwsh/PS7 路径不同，此处正确对应当前版本）
+    if ($PROFILE -and $PROFILE -ne "") { return $PROFILE }
+    # 兜底：按版本选择默认路径
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        return "$env:USERPROFILE\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
+    }
     return "$env:USERPROFILE\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
 }
 
@@ -1041,12 +1043,13 @@ function Main {
     $rc = Get-ProfilePath
     info "配置文件: $rc"
 
-    while ($true) {
+    $running = $true
+    while ($running) {
         Show-Menu
         $choice = Read-Host "请选择 [0-9]"
 
         switch ($choice) {
-            "0" { Write-Host "退出"; break }
+            "0" { Write-Host "退出"; $running = $false; break }
             "1" {
                 $hp, $sp = Auto-DetectPorts
                 info "使用端口: HTTP=$hp, SOCKS5=$sp"
@@ -1128,7 +1131,6 @@ function Main {
                 warn "无效选项，请重新输入"
             }
         }
-        if ($choice -eq "0") { break }
         Write-Host ""
     }
 }

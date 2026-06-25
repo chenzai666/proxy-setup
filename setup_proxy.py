@@ -42,6 +42,16 @@ PROXY_BLOCK_END   = "# >>> proxy-config end <<<"
 IS_WINDOWS = platform.system() == "Windows"
 IS_MAC      = platform.system() == "Darwin"
 
+# Windows: 启用 VT100/ANSI 转义序列（Win10+），避免颜色输出乱码
+if IS_WINDOWS:
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+
 
 def color(text, code):
     if IS_WINDOWS and sys.stdout.isatty():
@@ -1265,6 +1275,8 @@ def print_menu():
     if IS_WINDOWS:
         print("  8) 禁用 Windows 智能DNS")
         print("  9) 清空当前会话环境变量")
+    else:
+        print("  8) 清空当前会话环境变量")
     print("  0) 退出")
     print()
 
@@ -1437,6 +1449,10 @@ def main():
             smart_dns_menu()
 
         elif choice == "9" and IS_WINDOWS:
+            clean_current_env()
+            show_current_config()
+
+        elif choice == "8" and not IS_WINDOWS:
             clean_current_env()
             show_current_config()
 

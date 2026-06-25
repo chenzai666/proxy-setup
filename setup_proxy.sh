@@ -7,7 +7,7 @@
 #         bash setup_proxy.sh       # 写入配置但不立即生效（需重新开终端）
 # ============================================================
 
-set -eo pipefail
+set -u
 
 # ─── 配置区 ──────────────────────────────────────────────────
 DEFAULT_HTTP_PORT=7890
@@ -85,20 +85,12 @@ detect_v2rayn_port() {
     )
     for cfg in "${configs[@]}"; do
         [[ -f "$cfg" ]] || continue
-        http_port=$(python3 -c "
-import json,sys
-try:
-    d=json.load(open(sys.argv[1]))
-    print(d.get('httpPort',10808))
-except: print(10808)
-" "$cfg" 2>/dev/null || echo "10808")
-        socks_port=$(python3 -c "
-import json,sys
-try:
-    d=json.load(open(sys.argv[1]))
-    print(d.get('socksPort',int(sys.argv[2])))
-except: print(sys.argv[2])
-" "$cfg" "$http_port" 2>/dev/null || echo "$http_port")
+        # 纯 bash/grep/sed 解析 JSON，不依赖 python3
+        local raw_http raw_socks
+        raw_http=$(grep -o '"httpPort"[[:space:]]*:[[:space:]]*[0-9]*' "$cfg" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        raw_socks=$(grep -o '"socksPort"[[:space:]]*:[[:space:]]*[0-9]*' "$cfg" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        [[ -n "$raw_http"  ]] && http_port=$raw_http
+        [[ -n "$raw_socks" ]] && socks_port=$raw_socks || socks_port=$http_port
         info "检测到 v2rayN 端口: HTTP=$http_port, SOCKS=$socks_port  ($cfg)"
         echo "$http_port $socks_port"
         return
@@ -139,9 +131,6 @@ port_scan_candidates() {
     for ((offset=0; offset<=PORT_SCAN_RADIUS; offset++)); do
         for p in $((base-offset)) $((base+offset)); do
             [[ "$p" -ge 1 && "$p" -le 65535 ]] || continue
-            if [[ "$offset" -eq 0 && "$p" -ne "$base" ]]; then
-                continue
-            fi
             printf '%s\n' "$p"
         done
     done | awk '!seen[$0]++'
@@ -234,12 +223,26 @@ build_proxy_block() {
     printf '%s\n' "${lines[@]}"
 }
 
+# ─── RC 文件路径（统一决策，所有函数调用此处）────────────────
+get_rc_file() {
+    local rc="$HOME/.zshrc"
+    if [[ -n "${BASH_VERSION:-}" ]]; then
+        # 在 bash 下：优先 .bash_profile（macOS 登录 shell），其次 .bashrc（Linux）
+        if [[ -f "$HOME/.bash_profile" ]]; then
+            rc="$HOME/.bash_profile"
+        elif [[ -f "$HOME/.bashrc" ]]; then
+            rc="$HOME/.bashrc"
+        else
+            rc="$HOME/.bash_profile"   # 不存在则创建 .bash_profile
+        fi
+    fi
+    echo "$rc"
+}
+
 write_zshrc() {
     local hp=$1 sp=$2
-    local rc="$HOME/.zshrc"
-    [[ -f "$HOME/.bash_profile" ]] && [[ -z "${ZSH_VERSION:-}" ]] && rc="$HOME/.bash_profile"
-    # 如果当前是 bash 且存在 .bashrc
-    [[ -n "${BASH_VERSION:-}" ]] && [[ -f "$HOME/.bashrc" ]] && rc="$HOME/.bashrc"
+    local rc
+    rc=$(get_rc_file)
 
     local block
     block=$(build_proxy_block "$hp" "$sp")
@@ -296,8 +299,8 @@ configure_git() {
 }
 
 remove_all() {
-    local rc="$HOME/.zshrc"
-    [[ -n "${BASH_VERSION:-}" ]] && [[ -f "$HOME/.bashrc" ]] && rc="$HOME/.bashrc"
+    local rc
+    rc=$(get_rc_file)
 
     if [[ -f "$rc" ]]; then
         local tmp; tmp=$(mktemp)
@@ -311,7 +314,7 @@ remove_all() {
         ok "已从 $rc 移除代理配置"
     fi
     command -v npm >/dev/null 2>&1 && { npm config delete proxy 2>/dev/null; npm config delete https-proxy 2>/dev/null; ok "npm 代理已清除"; }
-    command -v git >/dev/null 2>&1 && { git config --global --unset http.proxy 2>/dev/null; git config --global --unset https.proxy 2>/dev/null; ok "git 代理已清除"; }
+    command -v git >/dev/null 2>&1 && { git config --global --unset http.proxy 2>/dev/null || true; git config --global --unset https.proxy 2>/dev/null || true; ok "git 代理已清除"; }
 }
 
 clean_current_env() {
@@ -542,9 +545,8 @@ print_menu() {
 }
 
 main() {
-    local rc="$HOME/.zshrc"
-    [[ -n "${BASH_VERSION:-}" ]] && rc="$HOME/.bashrc"
-    [[ -f "$HOME/.bash_profile" ]] && [[ -z "${ZSH_VERSION:-}" ]] && rc="$HOME/.bash_profile"
+    local rc
+    rc=$(get_rc_file)
     info "代理配置将写入: $rc"
 
     while true; do

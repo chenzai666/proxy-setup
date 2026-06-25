@@ -473,7 +473,7 @@ function Test-FullConnectivity($http_port) {
     foreach ($t in $targets) {
         $r = Invoke-CurlTest $http_port $t.URL
         if ($r.exitcode -eq "0" -and $r.http_code -ne "000") {
-            $tagMap = @{200="OK"; 401="连通"; 403="连通"; 405="连通"; 421="连通"; 404="连通"}
+            $tagMap = @{"200"="OK"; "401"="连通"; "403"="连通"; "405"="连通"; "421"="连通"; "404"="连通"}
             $tag = $tagMap[$r.http_code]
             if (-not $tag) { $tag = $r.http_code }
             Write-Host ("  {0,-20} " -f $t.Name) -NoNewline

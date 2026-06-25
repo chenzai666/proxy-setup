@@ -325,28 +325,31 @@ def get_rc_file() -> Path:
             return rc
         return home / ".zshrc"
     elif IS_WINDOWS:
-        # PowerShell profile
-        ps_profile = os.environ.get("PSPROFILE", "")
-        if ps_profile and Path(ps_profile).exists():
-            return Path(ps_profile)
-        # 默认 PowerShell profile 路径
         doc = Path.home() / "Documents"
-        ps_dir = doc / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
-        if ps_dir.exists():
-            return ps_dir
-        # 尝试获取实际 PS profile 路径
+        # PS7/pwsh 路径优先，其次 PS5
+        for ps_dir in (
+            doc / "PowerShell" / "Microsoft.PowerShell_profile.ps1",
+            doc / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1",
+        ):
+            if ps_dir.exists():
+                return ps_dir
+        # 两者都不存在时，检测当前运行的 PowerShell 版本决定默认路径
         try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", "$PROFILE"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            p = result.stdout.strip()
-            if p:
-                return Path(p)
+            for exe in ("pwsh", "pwsh.exe", "powershell", "powershell.exe"):
+                if not shutil.which(exe):
+                    continue
+                result = subprocess.run(
+                    [exe, "-NoProfile", "-Command", "$PROFILE"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+                p = result.stdout.strip()
+                if p:
+                    return Path(p)
+                break
         except Exception:
             pass
-        return Path.home() / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+        return doc / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
     else:
         return Path.home() / ".bashrc"
 
@@ -1090,7 +1093,7 @@ def check_dns_leak():
         info("Windows DNS 策略状态:")
         smart_status = check_smart_dns_status()
         for desc, (current, target, disabled) in smart_status.items():
-            current_text = "未设置" if current is None else str(current)
+            current_text = "未设置" if current == -1 else str(current)
             if disabled:
                 ok(f"  {desc}: 已按推荐禁用 ({current_text})")
             elif "mDNS" in desc or "LLMNR" in desc:

@@ -12,7 +12,7 @@
 | Windows | `install_python.ps1` | PowerShell 版本，支持更多自定义参数 |
 | macOS/Linux | `install_python.sh` | Bash 脚本，自动安装 Python 并运行配置 |
 
-### Windows 用户（ most common）
+### Windows 用户（most common）
 
 **推荐：双击 `install_python.bat`**
 
@@ -20,8 +20,7 @@
 1. 在以下位置查找 `setup_proxy.py` / `setup_proxy.ps1`：
    - 当前 `.bat` 所在文件夹
    - 父目录（`.bat` 在子文件夹时）
-   - `C:\Users\tt\WorkBuddy\Claw\`
-   - `Downloads/proxy-setup/`  (常见 ZIP 解压路径)
+   - `Downloads/proxy-setup/`（常见 ZIP 解压路径）
    - 桌面 `proxy-setup/`
 2. 如未找到，提示手动输入路径
 3. 检测 Python，未安装则通过 winget 安装 Python 3.13
@@ -64,10 +63,10 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 **Windows 固定版本（彻底避开 CDN 缓存漂移）：**
 
 ```powershell
-$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@e4cae12/setup_proxy.ps1'))
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@1823e1e/setup_proxy.ps1'))
 ```
 
-> `@e4cae12` 是包含 Claude / OpenAI 出口 IP 检测、macOS Bash/v2rayN 自动检测修复、Windows 当前会话代理清理的固定版本；固定 commit 不会自动更新。
+> 将 `@1823e1e` 替换为任意 commit hash 可锁定到指定版本；固定 commit 不会随 master 更新。
 
 **Mac / Linux:**
 
@@ -102,7 +101,7 @@ bash setup_proxy.sh
 - Clash（全平台）
 - sing-box（全平台）
 
-配置完成后，系统代理会自动指向对应端口（默认 10808 / 7890）。
+配置完成后，系统代理会自动指向对应端口（v2rayN 默认 10808，Clash 默认 7890）。
 
 ### Claude / OpenAI 出口 IP 检测
 
@@ -132,7 +131,7 @@ bash setup_proxy.sh
 
 - **Bash 版** (`setup_proxy.sh`)：菜单选项 `8`
 - **PowerShell 版** (`setup_proxy.ps1`)：菜单选项 `9`
-- **Python 版** (`setup_proxy.py`)：Windows 菜单选项 `9`（仅影响脚本进程本身）
+- **Python 版** (`setup_proxy.py`)：Windows 菜单选项 `9`，macOS/Linux 菜单选项 `8`（仅影响脚本进程本身）
 
 手动清理命令：
 

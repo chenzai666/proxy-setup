@@ -1092,13 +1092,28 @@ def _get_system_dns_servers() -> list[str]:
             except Exception:
                 pass
     else:
+        # 优先用 scutil --dns：能看到所有解析器，包括 VPN 注入的 DNS
         try:
-            for line in Path("/etc/resolv.conf").read_text(encoding="utf-8", errors="ignore").splitlines():
-                m = re.match(r"^\s*nameserver\s+(\S+)", line)
+            r = subprocess.run(
+                ["scutil", "--dns"], capture_output=True, text=True, timeout=5
+            )
+            for line in r.stdout.splitlines():
+                m = re.match(r"\s*nameserver\[\d+\]\s*:\s*(\S+)", line)
                 if m:
-                    servers.append(m.group(1))
+                    ip = m.group(1)
+                    if ip not in servers:
+                        servers.append(ip)
         except Exception:
             pass
+        # 兜底：/etc/resolv.conf（scutil 不可用时）
+        if not servers:
+            try:
+                for line in Path("/etc/resolv.conf").read_text(encoding="utf-8", errors="ignore").splitlines():
+                    m = re.match(r"^\s*nameserver\s+(\S+)", line)
+                    if m and m.group(1) not in servers:
+                        servers.append(m.group(1))
+            except Exception:
+                pass
 
     unique = []
     for server in servers:

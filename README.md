@@ -63,11 +63,10 @@ curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup
 **Windows (CMD) 加速版（jsdelivr CDN，国内更快）：**
 
 ```bat
-set PROXY_SETUP_REMOTE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py
-curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.cmd -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
+curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py -o %TEMP%\setup_proxy.py && python %TEMP%\setup_proxy.py && del %TEMP%\setup_proxy.py
 ```
 
-> 如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.cmd` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py` 清缓存后再运行。
+> jsdelivr 会拦截 `.cmd` 文件并返回 403，所以 CMD 加速版直接下载 Python 脚本运行。若 `python` 不可用，请先运行 `install_python.bat`，或把命令里的 `python` 改成 `py -3`。如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py` 清缓存后再运行。
 
 **Windows 加速版（jsdelivr CDN，国内更快）：**
 

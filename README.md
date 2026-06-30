@@ -60,6 +60,15 @@ curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup
 
 > CMD 版本是启动器：优先运行同目录的 `setup_proxy.py`，远程执行时会自动下载并调用 Python 版。若未安装 Python，请先运行 `install_python.bat`。
 
+**Windows (CMD) 加速版（jsdelivr CDN，国内更快）：**
+
+```bat
+set PROXY_SETUP_REMOTE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py
+curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.cmd -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
+```
+
+> 如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.cmd` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py` 清缓存后再运行。
+
 **Windows 加速版（jsdelivr CDN，国内更快）：**
 
 ```powershell

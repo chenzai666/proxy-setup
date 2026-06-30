@@ -52,6 +52,14 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 
 > `WebClient` + `iex` 在内存执行，无 BOM/编码问题。
 
+**Windows (CMD):**
+
+```bat
+curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.cmd -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
+```
+
+> CMD 版本是启动器：优先运行同目录的 `setup_proxy.py`，远程执行时会自动下载并调用 Python 版。若未安装 Python，请先运行 `install_python.bat`。
+
 **Windows 加速版（jsdelivr CDN，国内更快）：**
 
 ```powershell
@@ -191,6 +199,7 @@ proxy-setup/
 ├── setup_proxy.sh       # macOS/Linux Bash 平台分发入口
 ├── setup_proxy_macos.sh # macOS Bash 代理配置脚本
 ├── setup_proxy_linux.sh # Linux Bash 代理配置脚本
+├── setup_proxy.cmd      # Windows CMD 代理配置启动器
 └── setup_proxy.ps1      # PowerShell 代理配置脚本
 ```
 

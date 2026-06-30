@@ -68,13 +68,27 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 
 > 将 `@1823e1e` 替换为任意 commit hash 可锁定到指定版本；固定 commit 不会随 master 更新。
 
-**Mac / Linux:**
+**Mac / Linux（自动识别平台）:**
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
 ```
 
 > 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
+
+**macOS 专用：**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy_macos.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
+```
+
+**Linux 专用：**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy_linux.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
+```
+
+macOS 版本会按当前登录 shell 写入 `~/.zshrc` 或 `~/.bash_profile`，不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。Linux 版本默认写入 `~/.bashrc`，zsh 用户写入 `~/.zshrc`。
 
 ```bash
 # 或 Python 版（需先下载，管道执行会因 input() 报错）
@@ -174,7 +188,9 @@ proxy-setup/
 ├── install_python.ps1   # Windows PowerShell 版本
 ├── install_python.sh    # macOS/Linux Bash 版本
 ├── setup_proxy.py       # Python 代理配置主脚本
-├── setup_proxy.sh       # macOS/Linux Bash 代理配置脚本
+├── setup_proxy.sh       # macOS/Linux Bash 平台分发入口
+├── setup_proxy_macos.sh # macOS Bash 代理配置脚本
+├── setup_proxy_linux.sh # Linux Bash 代理配置脚本
 └── setup_proxy.ps1      # PowerShell 代理配置脚本
 ```
 

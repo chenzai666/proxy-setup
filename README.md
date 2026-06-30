@@ -58,15 +58,16 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.cmd -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
 ```
 
-> CMD 版本是启动器：优先运行同目录的 `setup_proxy.py`，远程执行时会自动下载并调用 Python 版。若未安装 Python，请先运行 `install_python.bat`。
+> CMD 版本是启动器：优先运行同目录的 `setup_proxy.ps1`，远程执行时会自动下载并调用 PowerShell 版，不依赖 Python。
 
 **Windows (CMD) 加速版（jsdelivr CDN，国内更快）：**
 
 ```bat
-curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py -o %TEMP%\setup_proxy.py && python %TEMP%\setup_proxy.py && del %TEMP%\setup_proxy.py
+set PROXY_SETUP_REMOTE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1
+curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_cmd.txt -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
 ```
 
-> jsdelivr 会拦截 `.cmd` 文件并返回 403，所以 CMD 加速版直接下载 Python 脚本运行。若 `python` 不可用，请先运行 `install_python.bat`，或把命令里的 `python` 改成 `py -3`。如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.py` 清缓存后再运行。
+> jsdelivr 会拦截 `.cmd` 文件并返回 403，所以 CMD 加速版下载同内容的 `setup_proxy_cmd.txt` 并保存为 `.cmd` 运行。如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_cmd.txt` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1` 清缓存后再运行。
 
 **Windows 加速版（jsdelivr CDN，国内更快）：**
 
@@ -208,6 +209,7 @@ proxy-setup/
 ├── setup_proxy_macos.sh # macOS Bash 代理配置脚本
 ├── setup_proxy_linux.sh # Linux Bash 代理配置脚本
 ├── setup_proxy.cmd      # Windows CMD 代理配置启动器
+├── setup_proxy_cmd.txt  # jsdelivr 可下载的 CMD 启动器镜像
 └── setup_proxy.ps1      # PowerShell 代理配置脚本
 ```
 

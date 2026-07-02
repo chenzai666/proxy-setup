@@ -51,6 +51,7 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 ```
 
 > `WebClient` + `iex` 在内存执行，无 BOM/编码问题。
+> Windows 版会自动设置 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`，用于保证写入的 PowerShell profile 能在新窗口加载；无需管理员权限。
 
 **Windows (CMD):**
 

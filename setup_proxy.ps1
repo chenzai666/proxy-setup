@@ -256,6 +256,7 @@ function Write-Profile($http_port, $socks5_port) {
         ok "已创建 $rc 并写入代理配置"
     }
 
+    Ensure-PowerShellExecutionPolicy
     Setup-CmdAutoRun $http_port $socks5_port
 }
 
@@ -308,6 +309,33 @@ function Remove-CmdAutoRun {
                 ok "CMD AutoRun 注册表已清除"
             } catch {}
         }
+    }
+}
+
+function Ensure-PowerShellExecutionPolicy {
+    try {
+        $machinePolicy = Get-ExecutionPolicy -Scope MachinePolicy -ErrorAction SilentlyContinue
+        $userPolicy = Get-ExecutionPolicy -Scope UserPolicy -ErrorAction SilentlyContinue
+
+        if ($machinePolicy -and $machinePolicy -ne "Undefined") {
+            warn "PowerShell 执行策略受 MachinePolicy 管理 ($machinePolicy)，无法自动修改"
+            return
+        }
+        if ($userPolicy -and $userPolicy -ne "Undefined") {
+            warn "PowerShell 执行策略受 UserPolicy 管理 ($userPolicy)，无法自动修改"
+            return
+        }
+
+        $current = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue
+        if ($current -in @("RemoteSigned", "Unrestricted", "Bypass")) {
+            ok "PowerShell 执行策略: CurrentUser $current"
+            return
+        }
+
+        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction Stop
+        ok "PowerShell 执行策略已设置: CurrentUser RemoteSigned"
+    } catch {
+        warn "PowerShell 执行策略设置失败: $_"
     }
 }
 

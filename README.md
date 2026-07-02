@@ -108,6 +108,12 @@ curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https:
 curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy_macos.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
 ```
 
+**macOS 专用加速版（jsdelivr CDN，国内更快）：**
+
+```bash
+curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_macos.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
+```
+
 **Linux 专用：**
 
 ```bash

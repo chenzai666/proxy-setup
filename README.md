@@ -93,6 +93,15 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 
 > 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
 
+**Mac / Linux 加速版（jsdelivr CDN，国内更快）：**
+
+```bash
+export PROXY_SETUP_REMOTE_BASE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master
+curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
+```
+
+> 加速版会让平台分发入口和后续下载的系统专用脚本都走 jsdelivr CDN。如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh`、`https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_macos.sh` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_linux.sh` 清缓存后再运行。
+
 **macOS 专用：**
 
 ```bash
@@ -103,6 +112,12 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy_linux.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
+```
+
+**Linux 专用加速版（jsdelivr CDN，国内更快）：**
+
+```bash
+curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_linux.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
 macOS 版本会按当前登录 shell 写入 `~/.zshrc` 或 `~/.bash_profile`，不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。Linux 版本默认写入 `~/.bashrc`，zsh 用户写入 `~/.zshrc`。

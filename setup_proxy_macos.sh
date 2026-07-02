@@ -225,12 +225,22 @@ build_proxy_block() {
 
 # ─── RC 文件路径（macOS）────────────────────────────────────
 get_rc_file() {
+    if [[ -n "${PROXY_SETUP_RC_FILE:-}" ]]; then
+        echo "$PROXY_SETUP_RC_FILE"
+        return
+    fi
+
     case "${SHELL:-}" in
-        */bash)
-            echo "$HOME/.bash_profile"
-            ;;
         */zsh|"")
             echo "$HOME/.zshrc"
+            ;;
+        */bash)
+            if [[ -x /bin/zsh || -x /usr/bin/zsh ]]; then
+                info "检测到 macOS zsh 可用，默认写入 ~/.zshrc；如需 bash，请设置 PROXY_SETUP_RC_FILE=$HOME/.bash_profile"
+                echo "$HOME/.zshrc"
+            else
+                echo "$HOME/.bash_profile"
+            fi
             ;;
         *)
             warn "未识别当前登录 shell: ${SHELL:-unknown}，默认写入 ~/.zshrc"

@@ -120,7 +120,7 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_linux.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
-macOS 版本会按当前登录 shell 写入 `~/.zshrc` 或 `~/.bash_profile`，不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。Linux 版本默认写入 `~/.bashrc`，zsh 用户写入 `~/.zshrc`。
+macOS 版本默认写入 `~/.zshrc`，如需写入 bash 配置可先设置 `PROXY_SETUP_RC_FILE=$HOME/.bash_profile`；不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。Linux 版本默认写入 `~/.bashrc`，zsh 用户写入 `~/.zshrc`。
 
 ```bash
 # 或 Python 版（需先下载，管道执行会因 input() 报错）

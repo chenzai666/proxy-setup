@@ -39,6 +39,18 @@ warn()  { printf '  \033[1;33m⚠ %s\033[0m\n' "$1" >&2; }
 err()   { printf '  \033[0;31m✗ %s\033[0m\n' "$1" >&2; }
 bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
 
+require_platform() {
+    local os_name
+    os_name="$(uname -s 2>/dev/null || echo unknown)"
+    if [[ "$os_name" != "Darwin" ]]; then
+        err "setup_proxy_macos.sh must run on macOS (Darwin), current OS: $os_name"
+        err "Use setup_proxy.sh for auto-detection or setup_proxy_linux.sh on Linux."
+        exit 1
+    fi
+}
+
+require_platform
+
 # ─── 端口检测 ────────────────────────────────────────────────
 
 detect_clash_ports() {

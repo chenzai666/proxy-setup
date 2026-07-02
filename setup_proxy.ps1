@@ -311,6 +311,14 @@ function Remove-CmdAutoRun {
     }
 }
 
+function Get-NpmCommand {
+    foreach ($name in @("npm.cmd", "npm.exe", "npm")) {
+        $cmd = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+    }
+    return $null
+}
+
 function Remove-Proxy {
     $rc = Get-ProfilePath
     $startEsc = [regex]::Escape($PROXY_BLOCK_START)
@@ -328,9 +336,10 @@ function Remove-Proxy {
 
     Remove-CmdAutoRun
 
-    if (Get-Command npm -ErrorAction SilentlyContinue) {
-        npm config delete proxy 2>$null
-        npm config delete https-proxy 2>$null
+    $npm = Get-NpmCommand
+    if ($npm) {
+        & $npm config delete proxy 2>$null
+        & $npm config delete https-proxy 2>$null
         ok "npm 代理已清除"
     }
 
@@ -344,13 +353,14 @@ function Remove-Proxy {
 # ---- npm / git 配置 ----
 
 function Configure-Npm($http_port) {
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+    $npm = Get-NpmCommand
+    if (-not $npm) {
         warn "未找到 npm，跳过"
         return
     }
     $url = "http://${PROXY_HOST}:${http_port}"
-    npm config set proxy $url 2>$null
-    npm config set https-proxy $url 2>$null
+    & $npm config set proxy $url 2>$null
+    & $npm config set https-proxy $url 2>$null
     ok "npm 代理已设置: $url"
 }
 

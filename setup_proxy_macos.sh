@@ -60,16 +60,34 @@ detect_clash_ports() {
         "$HOME/.config/mihomo/config.yaml"
         "$HOME/Library/Application Support/ClashX/config.yaml"
         "$HOME/Library/Application Support/ClashX Pro/config.yaml"
+        "$HOME/Library/Application Support/Clash Verge/config.yaml"
+        "$HOME/Library/Application Support/Clash Verge Rev/config.yaml"
+        "$HOME/Library/Application Support/clash-verge-rev/config.yaml"
+        "$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/config.yaml"
     )
+    local extra_dirs=(
+        "$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev"
+        "$HOME/Library/Application Support/clash-verge-rev"
+        "$HOME/Library/Application Support/Clash Verge"
+        "$HOME/Library/Application Support/Clash Verge Rev"
+        "$HOME/Library/Application Support/Mihomo Party"
+    )
+    local dir cfg
+    for dir in "${extra_dirs[@]}"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r cfg; do
+            configs+=("$cfg")
+        done < <(find "$dir" -maxdepth 4 -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
+    done
     for cfg in "${configs[@]}"; do
         [[ -f "$cfg" ]] || continue
         # 优先读 mixed-port
-        port=$(grep -E "^mixed-port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
+        port=$(grep -E "^[[:space:]]*mixed-port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
         [[ -n "$port" ]] && { info "检测到 Clash 混合端口: $port  ($cfg)"; echo "$port $port"; return; }
         # 其次读 port (HTTP)
-        port=$(grep -E "^port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
+        port=$(grep -E "^[[:space:]]*port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
         if [[ -n "$port" ]]; then
-            socks_port=$(grep -E "^socks-port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
+            socks_port=$(grep -E "^[[:space:]]*socks-port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
             [[ -n "$socks_port" ]] || socks_port=$((port+1))
             info "检测到 Clash HTTP 端口: $port  ($cfg)"
             echo "$port $socks_port"
@@ -78,7 +96,7 @@ detect_clash_ports() {
     done
     local scanned
     scanned=$(find_listening_port_near "$DEFAULT_HTTP_PORT" "Clash/Mihomo" || true)
-    [[ -n "$scanned" ]] && { echo "$scanned $((scanned+1))"; return; }
+    [[ -n "$scanned" ]] && { echo "$scanned $scanned"; return; }
     echo "$DEFAULT_HTTP_PORT $DEFAULT_SOCKS5_PORT"
 }
 
@@ -86,6 +104,20 @@ detect_clash_port() {
     local hp sp
     read -r hp sp <<< "$(detect_clash_ports)"
     echo "$hp"
+}
+
+detect_clash_listening_ports() {
+    local port
+    for port in 7890 7897 7898 7899; do
+        if check_port "$port"; then
+            info "Clash/Mihomo common port is listening: $port"
+            echo "$port $port"
+            return 0
+        fi
+    done
+    port=$(find_listening_port_near "$DEFAULT_HTTP_PORT" "Clash/Mihomo" || true)
+    [[ -n "$port" ]] && { echo "$port $port"; return 0; }
+    return 1
 }
 
 detect_v2rayn_port() {
@@ -170,16 +202,7 @@ proxy_port_from_env() {
 }
 
 auto_detect() {
-    # 优先检查 v2rayN。很多 v2rayN 混合端口 HTTP/SOCKS 共用 10808。
-    local vp sp
-    read -r vp sp <<< "$(detect_v2rayn_port)"
-    if check_port "$vp"; then
-        ok "v2rayN 端口 $vp 正在监听"
-        echo "$vp $sp"
-        return
-    fi
-
-    # 再尊重当前终端已经生效的代理端口，作为手动配置/旧会话 fallback。
+    # 先尊重当前终端已经生效的代理端口，作为手动配置/旧会话 fallback。
     local envp
     if envp=$(proxy_port_from_env); then
         if check_port "$envp"; then
@@ -190,7 +213,7 @@ auto_detect() {
         info "当前环境代理端口 $envp 未监听，继续自动检测"
     fi
 
-    # 再检查 Clash。
+    # macOS 优先检查 Clash/Mihomo。Clash Verge 常见 mixed-port 是 7890/7897。
     local cp csp
     read -r cp csp <<< "$(detect_clash_ports)"
     if check_port "$cp"; then
@@ -199,9 +222,19 @@ auto_detect() {
         return
     fi
 
-    # 如果 v2rayN 配置给出了端口但没检测到监听，仍优先用它的配置值。
-    if [[ -n "$vp" && "$vp" != "0" ]]; then
-        warn "未检测到监听端口，使用 v2rayN 配置端口"
+    local clash_listening
+    if clash_listening=$(detect_clash_listening_ports); then
+        read -r cp csp <<< "$clash_listening"
+        ok "Clash/Mihomo port $cp is listening"
+        echo "$cp $csp"
+        return
+    fi
+
+    # 再检查 v2rayN。很多 v2rayN 混合端口 HTTP/SOCKS 共用 10808。
+    local vp sp
+    read -r vp sp <<< "$(detect_v2rayn_port)"
+    if check_port "$vp"; then
+        ok "v2rayN 端口 $vp 正在监听"
         echo "$vp $sp"
         return
     fi

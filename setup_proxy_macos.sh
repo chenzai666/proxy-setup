@@ -106,20 +106,6 @@ detect_clash_port() {
     echo "$hp"
 }
 
-detect_clash_listening_ports() {
-    local port
-    for port in 7890 7897 7898 7899; do
-        if check_port "$port"; then
-            info "Clash/Mihomo common port is listening: $port"
-            echo "$port $port"
-            return 0
-        fi
-    done
-    port=$(find_listening_port_near "$DEFAULT_HTTP_PORT" "Clash/Mihomo" || true)
-    [[ -n "$port" ]] && { echo "$port $port"; return 0; }
-    return 1
-}
-
 detect_v2rayn_port() {
     local http_port=10808 socks_port=10808
     local configs=(
@@ -192,66 +178,31 @@ find_listening_port_near() {
     return 1
 }
 
-proxy_port_from_env() {
-    local proxy_value="${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}"
-    [[ -n "$proxy_value" ]] || return 1
-    local port
-    port=$(printf '%s\n' "$proxy_value" | sed -nE 's#^[a-zA-Z0-9+.-]+://[^/:]+:([0-9]+).*#\1#p')
-    [[ -n "$port" ]] || return 1
-    echo "$port"
-}
-
 auto_detect() {
-    # 先尊重当前终端已经生效的代理端口，作为手动配置/旧会话 fallback。
-    local envp
-    if envp=$(proxy_port_from_env); then
-        if check_port "$envp"; then
-            ok "当前环境代理端口 $envp 正在监听"
-            echo "$envp $envp"
-            return
-        fi
-        info "当前环境代理端口 $envp 未监听，继续自动检测"
-    fi
-
-    # macOS 优先检查 Clash/Mihomo。Clash Verge 常见 mixed-port 是 7890/7897。
     local cp csp
     read -r cp csp <<< "$(detect_clash_ports)"
-    if check_port "$cp"; then
-        ok "Clash 端口 $cp 正在监听"
-        echo "$cp $csp"
-        return
-    fi
-
-    local clash_listening
-    if clash_listening=$(detect_clash_listening_ports); then
-        read -r cp csp <<< "$clash_listening"
-        ok "Clash/Mihomo port $cp is listening"
-        echo "$cp $csp"
-        return
-    fi
-
-    if [[ -n "$cp" && "$cp" != "0" && ( "$cp" != "$DEFAULT_HTTP_PORT" || "$csp" != "$DEFAULT_SOCKS5_PORT" ) ]]; then
-        warn "Clash 配置端口 $cp 未监听，仍使用 Clash 配置端口；请确认 mixed-port 已启用"
-        echo "$cp $csp"
-        return
-    fi
-
-    # 再检查 v2rayN。很多 v2rayN 混合端口 HTTP/SOCKS 共用 10808。
     local vp sp
     read -r vp sp <<< "$(detect_v2rayn_port)"
-    if check_port "$vp"; then
-        ok "v2rayN 端口 $vp 正在监听"
-        echo "$vp $sp"
-        return
-    fi
-    # 再检查 sing-box
-    local sbp=$(detect_singbox_port)
-    if check_port "$sbp"; then
-        ok "sing-box 端口 $sbp 正在监听"
-        echo "$sbp $((sbp+1))"
-        return
-    fi
-    # 默认 clash 端口
+    local sbp
+    sbp=$(detect_singbox_port)
+
+    # Same model as the Windows script: collect candidates, choose the first
+    # one with an actual listening HTTP or SOCKS port, then fall back.
+    local candidates=(
+        "Clash/Mihomo:$cp:$csp"
+        "v2rayN:$vp:$sp"
+        "sing-box:$sbp:$((sbp+1))"
+    )
+    local candidate name hp socks
+    for candidate in "${candidates[@]}"; do
+        IFS=: read -r name hp socks <<< "$candidate"
+        if check_port "$hp" || check_port "$socks"; then
+            info "自动检测: $name 端口 $hp/$socks 正在监听"
+            echo "$hp $socks"
+            return
+        fi
+    done
+
     warn "未检测到监听端口，使用 Clash 默认 mixed-port"
     echo "$DEFAULT_HTTP_PORT $DEFAULT_SOCKS5_PORT"
 }
@@ -636,8 +587,8 @@ main() {
             2)
                 read -rp "  输入 HTTP 代理端口 [默认 $DEFAULT_HTTP_PORT]: " h
                 hp=${h:-$DEFAULT_HTTP_PORT}
-                read -rp "  输入 SOCKS5 代理端口 [默认 $((hp+1))]: " s
-                sp=${s:-$((hp+1))}
+                read -rp "  输入 SOCKS5 代理端口 [默认 $hp]: " s
+                sp=${s:-$hp}
                 write_zshrc "$hp" "$sp"
                 configure_npm "$hp"
                 read -rp "  是否同时配置 git 代理？[y/N] " cfg_git

@@ -10,8 +10,8 @@
 set -u
 
 # ─── 配置区 ──────────────────────────────────────────────────
-DEFAULT_HTTP_PORT=7890
-DEFAULT_SOCKS5_PORT=7891
+DEFAULT_HTTP_PORT=7897
+DEFAULT_SOCKS5_PORT=7897
 PORT_SCAN_RADIUS="${PORT_SCAN_RADIUS:-10}"
 HOST="127.0.0.1"
 NO_PROXY="localhost,127.0.0.1,::1"
@@ -230,6 +230,12 @@ auto_detect() {
         return
     fi
 
+    if [[ -n "$cp" && "$cp" != "0" && ( "$cp" != "$DEFAULT_HTTP_PORT" || "$csp" != "$DEFAULT_SOCKS5_PORT" ) ]]; then
+        warn "Clash 配置端口 $cp 未监听，仍使用 Clash 配置端口；请确认 mixed-port 已启用"
+        echo "$cp $csp"
+        return
+    fi
+
     # 再检查 v2rayN。很多 v2rayN 混合端口 HTTP/SOCKS 共用 10808。
     local vp sp
     read -r vp sp <<< "$(detect_v2rayn_port)"
@@ -246,7 +252,7 @@ auto_detect() {
         return
     fi
     # 默认 clash 端口
-    warn "未检测到监听端口，使用默认值"
+    warn "未检测到监听端口，使用 Clash 默认 mixed-port"
     echo "$DEFAULT_HTTP_PORT $DEFAULT_SOCKS5_PORT"
 }
 

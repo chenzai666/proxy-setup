@@ -231,32 +231,34 @@ proxy-setup/
 ├── setup_proxy_linux.sh # Linux Bash 代理配置脚本
 ├── setup_proxy.cmd      # Windows CMD 代理配置启动器
 ├── setup_proxy_cmd.txt  # jsdelivr 可下载的 CMD 启动器镜像
-└── setup_proxy.ps1      # PowerShell 代理配置脚本
+├── setup_proxy.ps1      # PowerShell 代理配置脚本
+├── clear_claude_login_state.ps1       # Windows Claude 桌面端登录状态清理脚本
+└── clear_claude_login_state_macos.sh  # macOS Claude 桌面端登录状态清理脚本
 ```
 
 ## 仓库地址
 
 https://github.com/chenzai666/proxy-setup
 
-## Claude Desktop cleanup
+## Claude 桌面端登录状态清理
 
-Clear Claude Desktop local login state and cache so the next launch starts at the sign-in screen. These scripts do not uninstall Claude and do not delete Claude Code CLI config unless you explicitly opt in.
+用于清理 Claude 桌面端本地登录状态和缓存，让下次打开 Claude 时回到重新登录界面。脚本不会卸载 Claude，也不会默认删除 Claude Code/CLI 的 `.claude` 配置。
 
 ### Windows
 
-Preview:
+预演，不真正删除：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -WhatIf
 ```
 
-Run:
+正式执行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1
 ```
 
-Remote one-liner:
+远程一行命令：
 
 ```powershell
 $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
@@ -264,19 +266,19 @@ $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude
 
 ### macOS
 
-Preview:
+预演，不真正删除：
 
 ```bash
 DRY_RUN=1 bash clear_claude_login_state_macos.sh
 ```
 
-Run:
+正式执行：
 
 ```bash
 bash clear_claude_login_state_macos.sh
 ```
 
-Remote one-liner:
+远程一行命令：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh

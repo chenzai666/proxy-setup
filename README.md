@@ -237,3 +237,47 @@ proxy-setup/
 ## 仓库地址
 
 https://github.com/chenzai666/proxy-setup
+
+## Claude Desktop cleanup
+
+Clear Claude Desktop local login state and cache so the next launch starts at the sign-in screen. These scripts do not uninstall Claude and do not delete Claude Code CLI config unless you explicitly opt in.
+
+### Windows
+
+Preview:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -WhatIf
+```
+
+Run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1
+```
+
+Remote one-liner:
+
+```powershell
+$u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+```
+
+### macOS
+
+Preview:
+
+```bash
+DRY_RUN=1 bash clear_claude_login_state_macos.sh
+```
+
+Run:
+
+```bash
+bash clear_claude_login_state_macos.sh
+```
+
+Remote one-liner:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
+```

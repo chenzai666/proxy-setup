@@ -264,6 +264,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.p
 $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
+远程一行命令加速版（jsDelivr CDN）：
+
+```powershell
+$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+```
+
 ### macOS
 
 预演，不真正删除：
@@ -283,3 +289,11 @@ bash clear_claude_login_state_macos.sh
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
 ```
+
+远程一行命令加速版（jsDelivr CDN）：
+
+```bash
+curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
+```
+
+> 如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state.ps1` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh` 清缓存后再运行。

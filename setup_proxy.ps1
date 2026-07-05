@@ -341,8 +341,8 @@ function Ensure-PowerShellExecutionPolicy {
 
 function Get-NpmCommand {
     foreach ($name in @("npm.cmd", "npm.exe", "npm")) {
-        $cmd = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
-        if ($cmd) { return $cmd.Source }
+        $cmd = @(Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($cmd.Count -gt 0 -and $cmd[0].Source) { return [string]$cmd[0].Source }
     }
     return $null
 }

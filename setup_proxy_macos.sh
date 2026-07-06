@@ -189,8 +189,8 @@ auto_detect() {
     # Same model as the Windows script: collect candidates, choose the first
     # one with an actual listening HTTP or SOCKS port, then fall back.
     local candidates=(
-        "Clash/Mihomo:$cp:$csp"
         "v2rayN:$vp:$sp"
+        "Clash/Mihomo:$cp:$csp"
         "sing-box:$sbp:$((sbp+1))"
     )
     local candidate name hp socks
@@ -203,7 +203,7 @@ auto_detect() {
         fi
     done
 
-    warn "未检测到监听端口，使用 Clash 默认 mixed-port"
+    warn "未检测到监听端口，使用默认值"
     echo "$DEFAULT_HTTP_PORT $DEFAULT_SOCKS5_PORT"
 }
 

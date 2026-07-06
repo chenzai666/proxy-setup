@@ -1407,10 +1407,6 @@ def print_how_to_apply():
 # ─── 主函数 ─────────────────────────────────────────────────────────
 
 def main():
-    if not (IS_MAC or IS_WINDOWS):
-        print(f"不支持的平台: {platform.system()}。请在 macOS 或 Windows 上运行。", file=sys.stderr)
-        sys.exit(1)
-
     rc_file = get_rc_file()
     info(f"配置文件: {rc_file}")
 

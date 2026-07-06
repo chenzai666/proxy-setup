@@ -35,10 +35,6 @@ case "$OS_NAME" in
     Darwin)
         run_platform_script "setup_proxy_macos.sh" "$@"
         ;;
-    Linux)
-        echo "Linux is not supported. Use setup_proxy.ps1 on Windows or setup_proxy_macos.sh on macOS." >&2
-        exit 1
-        ;;
     *)
         echo "Unsupported OS: $OS_NAME" >&2
         echo "Use setup_proxy.ps1 on Windows or setup_proxy_macos.sh on macOS." >&2

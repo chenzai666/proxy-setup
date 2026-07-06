@@ -8,38 +8,21 @@ _PROXY_SOURCED=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
-REMOTE_BASE_URL="${PROXY_SETUP_REMOTE_BASE_URL:-https://raw.githubusercontent.com/chenzai666/proxy-setup/master}"
-TMP_PLATFORM_SCRIPT=""
-trap '[[ -n "${TMP_PLATFORM_SCRIPT:-}" ]] && rm -f "$TMP_PLATFORM_SCRIPT"' EXIT
 
 run_platform_script() {
     local script_name=$1
     local local_script="$SCRIPT_DIR/$script_name"
 
-    if [[ -f "$local_script" ]]; then
-        if [[ "$_PROXY_SOURCED" == "1" ]]; then
-            . "$local_script"
-        else
-            exec bash "$local_script" "$@"
-        fi
-        return
-    fi
-
-    TMP_PLATFORM_SCRIPT="/tmp/${script_name}"
-
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$REMOTE_BASE_URL/$script_name" -o "$TMP_PLATFORM_SCRIPT"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$TMP_PLATFORM_SCRIPT" "$REMOTE_BASE_URL/$script_name"
-    else
-        echo "Neither curl nor wget is available to download $script_name" >&2
+    if [[ ! -f "$local_script" ]]; then
+        echo "Script not found: $local_script" >&2
+        echo "Please run: git clone https://github.com/chenzai666/proxy-setup.git" >&2
         exit 1
     fi
 
     if [[ "$_PROXY_SOURCED" == "1" ]]; then
-        . "$TMP_PLATFORM_SCRIPT"
+        . "$local_script"
     else
-        bash "$TMP_PLATFORM_SCRIPT" "$@"
+        exec bash "$local_script" "$@"
     fi
 }
 

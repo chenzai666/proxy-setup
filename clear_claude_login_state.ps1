@@ -10,13 +10,13 @@ Claude and does not delete files outside the selected Windows user profile.
 Run with -WhatIf first if you want to preview what will be removed.
 
 .EXAMPLE
-.\Clear-ClaudeLoginState.ps1
+.\clear_claude_login_state.ps1
 
 .EXAMPLE
-.\Clear-ClaudeLoginState.ps1 -UserProfile $env:USERPROFILE
+.\clear_claude_login_state.ps1 -UserProfile $env:USERPROFILE
 
 .EXAMPLE
-.\Clear-ClaudeLoginState.ps1 -UserProfile $env:USERPROFILE -IncludeClaudeCli
+.\clear_claude_login_state.ps1 -UserProfile $env:USERPROFILE -IncludeClaudeCli
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
@@ -85,7 +85,7 @@ function Remove-Target {
     }
 
     if ($PSCmdlet.ShouldProcess($Path, 'Remove recursively')) {
-        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Continue
         Write-Host "Removed: $Path"
     }
 }
@@ -174,6 +174,16 @@ if ($IncludeBrowserIndexedDb) {
                 Add-Target -Targets $targets -Path (Join-Path $_.FullName 'IndexedDB\https_claude.ai_0.indexeddb.blob')
             }
     }
+
+    # Firefox profiles: %APPDATA%\Mozilla\Firefox\Profiles\*
+    $ffProfilesRoot = Join-Path $UserProfile 'AppData\Roaming\Mozilla\Firefox\Profiles'
+    if (Test-Path -LiteralPath $ffProfilesRoot) {
+        Get-ChildItem -LiteralPath $ffProfilesRoot -Directory -Force -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                Add-Target -Targets $targets -Path (Join-Path $_.FullName 'storage\default\https+++claude.ai')
+                Add-Target -Targets $targets -Path (Join-Path $_.FullName 'storage\default\https+++claude.ai^firstPartyDomain=claude.ai')
+            }
+    }
 }
 
 Write-Host "Stopping Claude processes..."
@@ -203,6 +213,6 @@ Write-Host 'If you sign in and still see account_banned/account on hold, that is
 
 if ($IncludeBrowserIndexedDb) {
     Write-Host ''
-    Write-Host 'Browser note: this script removes named claude.ai IndexedDB folders only.'
-    Write-Host 'For browser/PWA cookies, open chrome://settings/content/all, edge://settings/siteData, or brave://settings/content/all and delete claude.ai.'
+    Write-Host 'Browser note: this script removes named claude.ai IndexedDB/storage folders only.'
+    Write-Host 'For cookies, open chrome://settings/content/all, edge://settings/siteData, brave://settings/content/all, or Firefox about:preferences#privacy and delete claude.ai site data.'
 }

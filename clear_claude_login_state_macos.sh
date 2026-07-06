@@ -38,7 +38,7 @@ remove_path() {
   if [ "$dry_run" = "1" ]; then
     say "Would remove: $path"
   else
-    rm -rf "$path"
+    rm -rf "$path" || true
     say "Removed: $path"
   fi
 }
@@ -51,7 +51,7 @@ else
   osascript -e 'quit app "Claude"' >/dev/null 2>&1 || true
   sleep 2
   pkill -x Claude >/dev/null 2>&1 || true
-  pkill -f '/Claude.app/' >/dev/null 2>&1 || true
+  pkill -f 'MacOS/Claude' >/dev/null 2>&1 || true
 fi
 
 say "Removing Claude Desktop app data and cache..."
@@ -95,6 +95,12 @@ for root in "${common_roots[@]}"; do
 done
 
 if [ "$include_claude_cli" = "1" ]; then
+  say "Stopping Claude CLI processes..."
+  if [ "$dry_run" = "1" ]; then
+    say "Would run: pkill -x claude"
+  else
+    pkill -x claude >/dev/null 2>&1 || true
+  fi
   say "Removing Claude CLI/config directory..."
   remove_path "$home_dir/.claude"
 fi

@@ -53,12 +53,6 @@ if IS_WINDOWS:
         pass
 
 
-def color(text, code):
-    if IS_WINDOWS and sys.stdout.isatty():
-        return f"\033[{code}m{text}\033[0m"
-    elif not IS_WINDOWS:
-        return f"\033[{code}m{text}\033[0m"
-    return text
 
 def info(msg):  print(f"  {msg}")
 def ok(msg):    print(f"  [OK] {msg}")
@@ -255,20 +249,20 @@ def auto_detect_ports() -> tuple:
 
     if IS_MAC:
         candidates = [
-            ("Clash/Mihomo",) + detect_clash_ports(),
             ("v2rayN",) + detect_v2rayn_port(),
+            ("Clash/Mihomo",) + detect_clash_ports(),
             ("sing-box",) + detect_singbox_port(),
         ]
     elif IS_WINDOWS:
         candidates = [
             ("v2rayN",) + detect_v2rayn_port(),
-            ("sing-box",) + detect_singbox_port(),
             ("Clash",) + detect_clash_ports(),
+            ("sing-box",) + detect_singbox_port(),
         ]
     else:
         candidates = [
-            ("Clash",) + detect_clash_ports(),
             ("v2rayN",) + detect_v2rayn_port(),
+            ("Clash",) + detect_clash_ports(),
             ("sing-box",) + detect_singbox_port(),
         ]
 
@@ -536,6 +530,17 @@ def remove_proxy(rc_file: Path):
         except Exception:
             pass
 
+    # 清除 pip
+    cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    pip = (shutil.which("pip3") or shutil.which("pip") or
+           (shutil.which("pip3.exe") or shutil.which("pip.exe")) if IS_WINDOWS else None)
+    if pip:
+        try:
+            subprocess.run([pip, "config", "unset", "global.proxy"], capture_output=True, creationflags=cf)
+            ok("pip 代理已清除")
+        except Exception:
+            pass
+
 
 # ─── npm / git 配置 ─────────────────────────────────────────────────
 
@@ -565,6 +570,22 @@ def configure_git(http_port: int):
         ok(f"git 代理已设置: {proxy_url}")
     except subprocess.CalledProcessError as e:
         warn(f"git 代理配置失败: {e}")
+
+
+def configure_pip(http_port: int):
+    cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    pip = (shutil.which("pip3") or shutil.which("pip") or
+           (shutil.which("pip3.exe") or shutil.which("pip.exe")) if IS_WINDOWS else None)
+    if not pip:
+        warn("未找到 pip，跳过 pip 代理配置")
+        return
+    proxy_url = f"http://{HOST}:{http_port}"
+    try:
+        subprocess.run([pip, "config", "set", "global.proxy", proxy_url],
+                       check=True, capture_output=True, creationflags=cf)
+        ok(f"pip 代理已设置: {proxy_url}")
+    except subprocess.CalledProcessError as e:
+        warn(f"pip 代理配置失败: {e}")
 
 
 # ─── 验证 ────────────────────────────────────────────────────────────
@@ -1429,6 +1450,7 @@ def main():
 
             write_rc_file(rc_file, http_port, socks5_port)
             configure_npm(http_port)
+            configure_pip(http_port)
 
             cfg_git = input("\n  是否同时配置 git 代理？[y/N] ").strip().lower()
             if cfg_git == "y":
@@ -1456,6 +1478,7 @@ def main():
 
             write_rc_file(rc_file, http_port, socks5_port)
             configure_npm(http_port)
+            configure_pip(http_port)
 
             cfg_git = input("\n  是否同时配置 git 代理？[y/N] ").strip().lower()
             if cfg_git == "y":

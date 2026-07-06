@@ -44,7 +44,7 @@ require_platform() {
     os_name="$(uname -s 2>/dev/null || echo unknown)"
     if [[ "$os_name" != "Darwin" ]]; then
         err "setup_proxy_macos.sh must run on macOS (Darwin), current OS: $os_name"
-        err "Use setup_proxy.sh for auto-detection or setup_proxy_linux.sh on Linux."
+        err "Use setup_proxy.ps1 on Windows."
         exit 1
     fi
 }
@@ -328,12 +328,13 @@ remove_all() {
     rc=$(get_rc_file)
 
     if [[ -f "$rc" ]]; then
-        local tmp; tmp=$(mktemp)
+        local tmp; tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
+        chmod --reference="$rc" "$tmp" 2>/dev/null || chmod 644 "$tmp"
         local in_block=0
         while IFS= read -r line; do
             if [[ "$line" == "$PROXY_BLOCK_START"* ]]; then in_block=1; continue; fi
             if [[ "$line" == "$PROXY_BLOCK_END"* ]]; then in_block=0; continue; fi
-            [[ $in_block -eq 0 ]] && echo "$line" >> "$tmp"
+            [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
         done < "$rc"
         mv "$tmp" "$rc"
         ok "已从 $rc 移除代理配置"

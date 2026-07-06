@@ -378,6 +378,12 @@ function Remove-Proxy {
         git config --global --unset https.proxy 2>$null
         ok "git 代理已清除"
     }
+
+    $pip = Get-PipCommand
+    if ($pip) {
+        & $pip config unset global.proxy 2>$null
+        ok "pip 代理已清除"
+    }
 }
 
 # ---- npm / git 配置 ----
@@ -403,6 +409,25 @@ function Configure-Git($http_port) {
     git config --global http.proxy $url 2>$null
     git config --global https.proxy $url 2>$null
     ok "git 代理已设置: $url"
+}
+
+function Get-PipCommand {
+    foreach ($name in @("pip3.exe", "pip.exe", "pip3", "pip")) {
+        $cmd = @(Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($cmd.Count -gt 0 -and $cmd[0].Source) { return [string]$cmd[0].Source }
+    }
+    return $null
+}
+
+function Configure-Pip($http_port) {
+    $pip = Get-PipCommand
+    if (-not $pip) {
+        warn "未找到 pip，跳过"
+        return
+    }
+    $url = "http://${PROXY_HOST}:${http_port}"
+    & $pip config set global.proxy $url 2>$null
+    ok "pip 代理已设置: $url"
 }
 
 # ---- 验证与测试 ----
@@ -1119,6 +1144,7 @@ function Main {
 
                 Write-Profile $hp $sp
                 Configure-Npm $hp
+                Configure-Pip $hp
 
                 $cfg_git = Read-Host "  是否同时配置 git 代理？[y/N]"
                 if ($cfg_git -eq "y") { Configure-Git $hp }
@@ -1142,6 +1168,7 @@ function Main {
 
                 Write-Profile $hp $sp
                 Configure-Npm $hp
+                Configure-Pip $hp
 
                 $cfg_git = Read-Host "  是否同时配置 git 代理？[y/N]"
                 if ($cfg_git -eq "y") { Configure-Git $hp }

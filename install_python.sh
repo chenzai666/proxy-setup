@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Python 3 安装脚本（Mac / Linux）
+#  Python 3 安装脚本（macOS）
 #  proxy-setup 配套，确保 setup_proxy.py 可用
 # ============================================================
 set -euo pipefail
@@ -105,40 +105,6 @@ install_mac() {
     return 1
 }
 
-# ---- Linux 安装 ----
-
-install_linux() {
-    info "Linux 检测中..."
-
-    if command -v apt-get &>/dev/null; then
-        info "apt-get 安装 Python 3..."
-        sudo apt-get update -qq && sudo apt-get install -y python3 python3-venv python3-pip
-    elif command -v yum &>/dev/null; then
-        info "yum 安装 Python 3..."
-        sudo yum install -y python3 python3-pip
-    elif command -v dnf &>/dev/null; then
-        info "dnf 安装 Python 3..."
-        sudo dnf install -y python3 python3-pip
-    elif command -v pacman &>/dev/null; then
-        info "pacman 安装 Python 3..."
-        sudo pacman -S --noconfirm python python-pip
-    elif command -v apk &>/dev/null; then
-        info "apk 安装 Python 3..."
-        sudo apk add python3 py3-pip
-    else
-        err "未识别的 Linux 发行版，请手动安装 python3"
-        return 1
-    fi
-
-    if command -v python3 &>/dev/null; then
-        ok "Python 3 安装成功"
-        python3 --version
-        return 0
-    fi
-    err "安装失败"
-    return 1
-}
-
 # ---- 检测并运行 setup_proxy ----
 
 find_and_run_setup() {
@@ -216,12 +182,8 @@ main() {
             install_mac || return 1
             find_and_run_setup
             ;;
-        Linux)
-            install_linux || return 1
-            find_and_run_setup
-            ;;
         *)
-            err "不支持的系统: $os_type"
+            err "此脚本仅支持 macOS。Linux 不在支持范围内。"
             info "请手动安装: https://www.python.org/downloads/"
             return 1
             ;;

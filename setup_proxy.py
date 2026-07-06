@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-跨平台终端代理一键配置脚本
-支持: macOS (Clash/ClashX/v2rayN/v2rayU/sing-box) + Windows (v2rayN/sing-box)
+终端代理一键配置脚本
+支持: macOS (Clash/ClashX/v2rayN/v2rayU/sing-box) + Windows (v2rayN/Clash/sing-box)
 适用于: Codex CLI / Claude Code / npm / git 等工具
 """
 
@@ -147,7 +147,7 @@ def detect_v2rayn_port() -> tuple:
     if appdata:
         prog_dirs.append(Path(appdata) / "v2rayN")
 
-    # macOS / Linux 路径
+    # macOS 路径
     prog_dirs += [
         Path.home() / ".config" / "v2rayN",
         Path.home() / "Library" / "Application Support" / "v2rayN",
@@ -1408,7 +1408,8 @@ def print_how_to_apply():
 
 def main():
     if not (IS_MAC or IS_WINDOWS):
-        warn(f"未测试的平台: {platform.system()}，部分功能可能不可用")
+        print(f"不支持的平台: {platform.system()}。请在 macOS 或 Windows 上运行。", file=sys.stderr)
+        sys.exit(1)
 
     rc_file = get_rc_file()
     info(f"配置文件: {rc_file}")

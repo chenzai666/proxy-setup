@@ -97,7 +97,7 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 **macOS 加速版（jsdelivr CDN，国内更快）：**
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
+curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh -o /tmp/sp.sh && PROXY_SETUP_REMOTE_BASE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
 **macOS 专用：**

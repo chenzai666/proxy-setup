@@ -229,8 +229,8 @@ proxy-setup/
 ├── setup_proxy.cmd                 # Windows CMD 代理配置启动器
 ├── setup_proxy_cmd.txt             # jsdelivr 可下载的 CMD 启动器镜像
 ├── setup_proxy.ps1                 # PowerShell 代理配置脚本
-├── clear_claude_login_state.ps1        # Windows Claude 桌面端登录状态清理脚本
-└── clear_claude_login_state_macos.sh   # macOS Claude 桌面端登录状态清理脚本
+├── clear_claude_login_state.ps1        # Windows Claude 登录状态清理脚本
+└── clear_claude_login_state_macos.sh   # macOS Claude 登录状态清理脚本
 ```
 
 ## 仓库地址
@@ -265,62 +265,107 @@ bash install_claude_code_linux.sh
 > `npm` 不是此脚本的前置依赖；如果系统已安装 npm，脚本会顺带检查 npm 全局路径里的 `claude`。
 > 如需通过代理下载，请在运行前设置 `http_proxy` / `https_proxy`。
 
-## Claude 桌面端登录状态清理
+## Claude 登录状态清理
 
-用于清理 Claude 桌面端本地登录状态和缓存，让下次打开 Claude 时回到重新登录界面。脚本不会卸载 Claude，也不会默认删除 Claude Code/CLI 的 `.claude` 配置。
+用于清理 Claude 桌面端或 Claude Code 的本地登录状态和缓存。两个目标互斥，默认只清理桌面端；显式选择 Claude Code 时才会清理 `.claude` / `.claude.json` 等 Claude Code 状态。
 
-清理范围包括：Electron 应用数据、Chrome / Edge / Firefox 中 claude.ai 的本地存储。
+清理范围：
+
+- `Desktop` / `desktop`：只清 Claude 桌面端 Electron 应用数据、缓存、偏好和保存状态。
+- `Code` / `code`：只清 Claude Code CLI 的本地配置、凭据和缓存。macOS 会额外尝试清理 Claude Code 的 Keychain 凭据。
+
+浏览器/PWA 的 `claude.ai` 站点存储不会默认清理；需要时再额外启用浏览器清理选项。
 
 ### Windows
 
-预演，不真正删除：
+桌面端预演，不真正删除：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -WhatIf
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Desktop -WhatIf
 ```
 
-正式执行：
+桌面端正式执行：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Desktop
 ```
 
-远程一行命令：
+Claude Code 正式执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Code
+```
+
+桌面端远程一行命令：
 
 ```powershell
 $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
-远程一行命令加速版（jsDelivr CDN）：
+桌面端远程一行命令加速版（jsDelivr CDN）：
 
 ```powershell
 $u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
+Claude Code 远程一行命令：
+
+```powershell
+$u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p -Target Code;Remove-Item $p -Force
+```
+
+Claude Code 远程一行命令加速版（jsDelivr CDN）：
+
+```powershell
+$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p -Target Code;Remove-Item $p -Force
+```
+
+如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在桌面端模式加 `-IncludeBrowserIndexedDb`。
+
 ### macOS
 
-预演，不真正删除：
+桌面端预演，不真正删除：
 
 ```bash
 DRY_RUN=1 bash clear_claude_login_state_macos.sh
 ```
 
-正式执行：
+桌面端正式执行：
 
 ```bash
-bash clear_claude_login_state_macos.sh
+bash clear_claude_login_state_macos.sh --target desktop
 ```
 
-远程一行命令：
+Claude Code 正式执行：
+
+```bash
+bash clear_claude_login_state_macos.sh --target code
+```
+
+桌面端远程一行命令：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
 ```
 
-远程一行命令加速版（jsDelivr CDN）：
+桌面端远程一行命令加速版（jsDelivr CDN）：
 
 ```bash
 curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
 ```
+
+Claude Code 远程一行命令：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh --target code; rm -f /tmp/clear_claude_login_state_macos.sh
+```
+
+Claude Code 远程一行命令加速版（jsDelivr CDN）：
+
+```bash
+curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh --target code; rm -f /tmp/clear_claude_login_state_macos.sh
+```
+
+如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在桌面端模式加 `INCLUDE_BROWSER_SITE_DATA=1`。
 
 > 如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state.ps1` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh` 清缓存后再运行。

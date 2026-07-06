@@ -25,7 +25,7 @@ run_platform_script() {
         return
     fi
 
-    TMP_PLATFORM_SCRIPT="$(mktemp "/tmp/${script_name}.XXXXXX")"
+    TMP_PLATFORM_SCRIPT="/tmp/${script_name}"
 
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL "$REMOTE_BASE_URL/$script_name" -o "$TMP_PLATFORM_SCRIPT"

@@ -77,7 +77,7 @@ detect_clash_ports() {
         [[ -d "$dir" ]] || continue
         while IFS= read -r cfg; do
             configs+=("$cfg")
-        done < <(find "$dir" -maxdepth 4 -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
+        done < <(find "$dir" -maxdepth 2 -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
     done
     for cfg in "${configs[@]}"; do
         [[ -f "$cfg" ]] || continue

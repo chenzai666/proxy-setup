@@ -115,6 +115,12 @@ if [ "$include_browser_site_data" = "1" ]; then
     done < <(find "$browser_root" -maxdepth 1 -type d \( -name 'Default' -o -name 'Profile *' \) 2>/dev/null)
   done
 
+  say "Removing Firefox claude.ai storage..."
+  while IFS= read -r ff_profile; do
+    remove_path "$ff_profile/storage/default/https+++claude.ai"
+    remove_path "$ff_profile/storage/default/https+++claude.ai^firstPartyDomain=claude.ai"
+  done < <(find "$home_dir/Library/Application Support/Firefox/Profiles" -maxdepth 1 -type d 2>/dev/null)
+
   say "Browser cookies are best removed from the browser UI by deleting site data for claude.ai."
 fi
 

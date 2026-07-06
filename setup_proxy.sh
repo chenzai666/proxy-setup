@@ -11,16 +11,48 @@ OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
 
 run_platform_script() {
     local script_name=$1
+    shift || true
     local local_script="$SCRIPT_DIR/$script_name"
 
     if [[ ! -f "$local_script" ]]; then
-        echo "Script not found: $local_script" >&2
-        echo "Please run: git clone https://github.com/chenzai666/proxy-setup.git" >&2
-        exit 1
+        local bases=()
+        if [[ -n "${PROXY_SETUP_REMOTE_BASE_URL:-}" ]]; then
+            bases+=("${PROXY_SETUP_REMOTE_BASE_URL%/}")
+        else
+            bases+=(
+                "https://raw.githubusercontent.com/chenzai666/proxy-setup/master"
+                "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master"
+            )
+        fi
+
+        if ! command -v curl >/dev/null 2>&1; then
+            echo "Script not found: $local_script" >&2
+            echo "curl is required to download $script_name." >&2
+            exit 1
+        fi
+
+        local base url tmp
+        tmp="${local_script}.tmp.$$"
+        for base in "${bases[@]}"; do
+            url="$base/$script_name"
+            echo "Downloading platform script: $url" >&2
+            if curl -fsSL "$url" -o "$tmp"; then
+                mv "$tmp" "$local_script"
+                chmod +x "$local_script" 2>/dev/null || true
+                break
+            fi
+        done
+        rm -f "$tmp"
+
+        if [[ ! -f "$local_script" ]]; then
+            echo "Script not found: $local_script" >&2
+            echo "Please run: git clone https://github.com/chenzai666/proxy-setup.git" >&2
+            exit 1
+        fi
     fi
 
     if [[ "$_PROXY_SOURCED" == "1" ]]; then
-        . "$local_script"
+        . "$local_script" "$@"
     else
         exec bash "$local_script" "$@"
     fi

@@ -41,7 +41,7 @@ python3 setup_proxy.py
 
 ## 远程执行（无需下载）
 
-> 适用于 `setup_proxy.sh` / `setup_proxy.ps1` 等自包含脚本。
+> 适用于 Windows PowerShell/CMD 入口，以及 macOS Bash 分发入口。
 
 **Windows (PowerShell):**
 
@@ -80,10 +80,10 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 **Windows 固定版本（彻底避开 CDN 缓存漂移）：**
 
 ```powershell
-$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@1823e1e/setup_proxy.ps1'))
+$commit='<commit-hash>';$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString("https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/setup_proxy.ps1"))
 ```
 
-> 将 `@1823e1e` 替换为任意 commit hash 可锁定到指定版本；固定 commit 不会随 master 更新。
+> 将 `<commit-hash>` 替换为任意 commit hash 可锁定到指定版本；固定 commit 不会随 master 更新。
 
 **macOS（自动识别平台）:**
 
@@ -92,6 +92,7 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 ```
 
 > 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
+> 分发入口会在同目录缺少 `setup_proxy_macos.sh` 时自动下载 macOS 专用脚本。
 
 **macOS 加速版（jsdelivr CDN，国内更快）：**
 
@@ -219,7 +220,6 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy
 ```
 proxy-setup/
 ├── install_python.bat              # Windows 一键安装启动器
-├── install_python.ps1              # Windows PowerShell 版本
 ├── install_python.sh               # macOS Bash 版本
 ├── install_claude_code_macos.sh    # macOS Claude Code 安装脚本
 ├── install_claude_code_linux.sh    # Linux Claude Code 安装脚本

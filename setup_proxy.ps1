@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Windows 终端代理一键配置（纯 PowerShell，无需 Python）
     支持 v2rayN / Clash / sing-box

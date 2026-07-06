@@ -68,7 +68,7 @@ echo.
 winget --version >nul 2>&1
 if errorlevel 1 goto :no_winget
 
-winget install Python.Python.3.13 --accept-package-agreements --accept-source-agreements
+winget install --id Python.Python.3.13 --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
 if errorlevel 1 goto :no_winget
 
 echo.

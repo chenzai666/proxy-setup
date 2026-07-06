@@ -1,6 +1,6 @@
 # proxy-setup
 
-跨平台代理配置脚本，支持 v2rayN / Clash / sing-box 等工具，一键配置系统代理。
+Windows / macOS 代理配置脚本，支持 v2rayN / Clash / sing-box 等工具，一键配置系统代理。
 
 ## 安装脚本
 
@@ -10,7 +10,7 @@
 |------|------|------|
 | Windows | `install_python.bat` | 双击运行，自动安装 Python 3.13 后启动配置 |
 | Windows | `install_python.ps1` | PowerShell 版本，支持更多自定义参数 |
-| macOS/Linux | `install_python.sh` | Bash 脚本，自动安装 Python 并运行配置 |
+| macOS | `install_python.sh` | Bash 脚本，自动安装 Python 并运行配置 |
 
 ### Windows 用户（most common）
 
@@ -36,7 +36,7 @@
 # Windows
 python setup_proxy.py
 
-# macOS/Linux
+# macOS
 python3 setup_proxy.py
 ```
 
@@ -86,7 +86,7 @@ $w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadStr
 
 > 将 `@1823e1e` 替换为任意 commit hash 可锁定到指定版本；固定 commit 不会随 master 更新。
 
-**Mac / Linux（自动识别平台）:**
+**macOS（自动识别平台）:**
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
@@ -94,13 +94,11 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 
 > 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
 
-**Mac / Linux 加速版（jsdelivr CDN，国内更快）：**
+**macOS 加速版（jsdelivr CDN，国内更快）：**
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh -o /tmp/sp.sh && PROXY_SETUP_REMOTE_BASE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master bash /tmp/sp.sh; rm -f /tmp/sp.sh
+curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
-
-> 加速版会让平台分发入口和后续下载的系统专用脚本都走 jsdelivr CDN。如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh`、`https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_macos.sh` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_linux.sh` 清缓存后再运行。
 
 **macOS 专用：**
 
@@ -114,19 +112,7 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_macos.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
-**Linux 专用：**
-
-```bash
-curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy_linux.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
-```
-
-**Linux 专用加速版（jsdelivr CDN，国内更快）：**
-
-```bash
-curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_linux.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
-```
-
-macOS 版本默认写入 `~/.zshrc`，如需写入 bash 配置可先设置 `PROXY_SETUP_RC_FILE=$HOME/.bash_profile`；不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。Linux 版本默认写入 `~/.bashrc`，zsh 用户写入 `~/.zshrc`。
+macOS 版本默认写入 `~/.zshrc`，如需写入 bash 配置可先设置 `PROXY_SETUP_RC_FILE=$HOME/.bash_profile`；不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。
 
 ```bash
 # 或 Python 版（需先下载，管道执行会因 input() 报错）
@@ -142,7 +128,7 @@ cd proxy-setup
 # Windows（CMD）
 install_python.bat
 
-# macOS / Linux
+# macOS
 bash setup_proxy.sh
 ```
 
@@ -150,10 +136,21 @@ bash setup_proxy.sh
 
 脚本支持配置以下工具的代理设置：
 - v2rayN（Windows）
-- Clash（全平台）
-- sing-box（全平台）
+- Clash/Mihomo（Windows、macOS）
+- sing-box（Windows、macOS）
 
-配置完成后，系统代理会自动指向对应端口（v2rayN 默认 10808，Clash 默认 7890）。
+### 自动检测代理端口
+
+两个平台的自动检测优先级一致：**v2rayN → Clash/Mihomo → sing-box**。
+
+每个客户端的默认 HTTP 端口上下各扫 **±10 个端口**，确保在非默认端口运行时也能正确识别。
+
+### 代理配置项
+
+脚本配置的代理范围包括：
+- Shell 环境变量（`http_proxy` / `https_proxy` / `all_proxy`）写入 shell rc 文件
+- `git` 全局代理
+- `pip` 全局代理（`~/.config/pip/pip.conf` / `%APPDATA%\pip\pip.ini`）
 
 ### Claude / OpenAI 出口 IP 检测
 
@@ -162,7 +159,7 @@ bash setup_proxy.sh
 菜单入口：
 
 - **Python 版** (`setup_proxy.py`)：菜单选项 `7`
-- **Bash 版** (`setup_proxy.sh`)：菜单选项 `7`
+- **Bash 版** (`setup_proxy_macos.sh`)：菜单选项 `7`
 - **PowerShell 版** (`setup_proxy.ps1`)：菜单选项 `8`
 
 检测目标：
@@ -181,9 +178,9 @@ bash setup_proxy.sh
 
 菜单入口：
 
-- **Bash 版** (`setup_proxy.sh`)：菜单选项 `8`
+- **Bash 版** (`setup_proxy_macos.sh`)：菜单选项 `8`
 - **PowerShell 版** (`setup_proxy.ps1`)：菜单选项 `9`
-- **Python 版** (`setup_proxy.py`)：Windows 菜单选项 `9`，macOS/Linux 菜单选项 `8`（仅影响脚本进程本身）
+- **Python 版** (`setup_proxy.py`)：Windows 菜单选项 `9`，macOS 菜单选项 `8`（仅影响脚本进程本身）
 
 手动清理命令：
 
@@ -222,27 +219,57 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy
 
 ```
 proxy-setup/
-├── install_python.bat   # Windows 一键安装启动器
-├── install_python.ps1   # Windows PowerShell 版本
-├── install_python.sh    # macOS/Linux Bash 版本
-├── setup_proxy.py       # Python 代理配置主脚本
-├── setup_proxy.sh       # macOS/Linux Bash 平台分发入口
-├── setup_proxy_macos.sh # macOS Bash 代理配置脚本
-├── setup_proxy_linux.sh # Linux Bash 代理配置脚本
-├── setup_proxy.cmd      # Windows CMD 代理配置启动器
-├── setup_proxy_cmd.txt  # jsdelivr 可下载的 CMD 启动器镜像
-├── setup_proxy.ps1      # PowerShell 代理配置脚本
-├── clear_claude_login_state.ps1       # Windows Claude 桌面端登录状态清理脚本
-└── clear_claude_login_state_macos.sh  # macOS Claude 桌面端登录状态清理脚本
+├── install_python.bat              # Windows 一键安装启动器
+├── install_python.ps1              # Windows PowerShell 版本
+├── install_python.sh               # macOS Bash 版本
+├── install_claude_code_macos.sh    # macOS Claude Code 安装脚本
+├── install_claude_code_linux.sh    # Linux Claude Code 安装脚本
+├── setup_proxy.py                  # Python 代理配置主脚本
+├── setup_proxy.sh                  # macOS Bash 平台分发入口
+├── setup_proxy_macos.sh            # macOS Bash 代理配置脚本
+├── setup_proxy.cmd                 # Windows CMD 代理配置启动器
+├── setup_proxy_cmd.txt             # jsdelivr 可下载的 CMD 启动器镜像
+├── setup_proxy.ps1                 # PowerShell 代理配置脚本
+├── clear_claude_login_state.ps1        # Windows Claude 桌面端登录状态清理脚本
+└── clear_claude_login_state_macos.sh   # macOS Claude 桌面端登录状态清理脚本
 ```
 
 ## 仓库地址
 
 https://github.com/chenzai666/proxy-setup
 
+## Claude Code 安装
+
+### macOS
+
+```bash
+bash install_claude_code_macos.sh
+```
+
+支持环境变量自定义：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CLAUDE_CODE_SKIP_INSTALL=1` | 跳过下载安装，仅修复 PATH / 符号链接 | 否 |
+| `CLAUDE_CODE_RC_FILE=PATH` | 指定写入的 shell 配置文件 | zsh→`~/.zshrc`，bash→`~/.bash_profile` |
+| `CLAUDE_CODE_BIN_DIR=PATH` | claude 符号链接目录 | `~/.local/bin` |
+| `CLAUDE_CODE_INSTALL_URL=URL` | 覆盖官方安装脚本地址 | `https://claude.ai/install.sh` |
+
+### Linux
+
+```bash
+bash install_claude_code_linux.sh
+```
+
+支持同名环境变量，rc 文件默认为 bash→`~/.bashrc`，zsh→`~/.zshrc`，fish→`~/.config/fish/config.fish`。
+
+> 如需通过代理下载，请在运行前设置 `http_proxy` / `https_proxy`。
+
 ## Claude 桌面端登录状态清理
 
 用于清理 Claude 桌面端本地登录状态和缓存，让下次打开 Claude 时回到重新登录界面。脚本不会卸载 Claude，也不会默认删除 Claude Code/CLI 的 `.claude` 配置。
+
+清理范围包括：Electron 应用数据、Chrome / Edge / Firefox 中 claude.ai 的本地存储。
 
 ### Windows
 

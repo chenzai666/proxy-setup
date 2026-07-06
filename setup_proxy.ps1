@@ -173,8 +173,8 @@ function Detect-SingBoxPort {
 function Auto-DetectPorts {
     $candidates = @(
         @{Name="v2rayN";   Ports=(Detect-V2rayNPort)},
-        @{Name="sing-box"; Ports=(Detect-SingBoxPort)},
-        @{Name="Clash";    Ports=(Detect-ClashPort)}
+        @{Name="Clash";    Ports=(Detect-ClashPort)},
+        @{Name="sing-box"; Ports=(Detect-SingBoxPort)}
     )
 
     foreach ($c in $candidates) {

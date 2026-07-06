@@ -260,28 +260,30 @@ write_zshrc() {
     block=$(build_proxy_block "$hp" "$sp")
 
     if [[ -f "$rc" ]]; then
-        # 删除旧块
+        cp "$rc" "${rc}.proxy-bak" 2>/dev/null || true
         local tmp
-        tmp=$(mktemp)
+        tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
+        chmod --reference="$rc" "$tmp" 2>/dev/null || chmod 644 "$tmp"
         local in_block=0
         while IFS= read -r line; do
             if [[ "$line" == "$PROXY_BLOCK_START"* ]]; then
-                in_block=1
-                continue
+                in_block=1; continue
             fi
             if [[ "$line" == "$PROXY_BLOCK_END"* ]]; then
-                in_block=0
-                continue
+                in_block=0; continue
             fi
-            [[ $in_block -eq 0 ]] && echo "$line" >> "$tmp"
+            [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
         done < "$rc"
-        # 追加新块
-        echo "" >> "$tmp"
-        echo "$block" >> "$tmp"
+        # 去除末尾多余空行，追加新块（避免多次运行积累空行）
+        local tmp2
+        tmp2=$(mktemp) || { rm -f "$tmp"; err "创建临时文件失败"; return 1; }
+        awk 'NF{f=NR} {a[NR]=$0} END{for(i=1;i<=f;i++) print a[i]}' "$tmp" > "$tmp2" && mv "$tmp2" "$tmp"
+        printf '\n' >> "$tmp"
+        printf '%s\n' "$block" >> "$tmp"
         mv "$tmp" "$rc"
         ok "已更新 $rc"
     else
-        echo "$block" > "$rc"
+        printf '%s\n' "$block" > "$rc"
         ok "已创建 $rc"
     fi
 }
@@ -310,6 +312,18 @@ configure_git() {
     fi
 }
 
+configure_pip() {
+    local hp=$1
+    local pip_cmd
+    pip_cmd=$(command -v pip3 2>/dev/null || command -v pip 2>/dev/null || echo "")
+    if [[ -n "$pip_cmd" ]]; then
+        "$pip_cmd" config set global.proxy "http://$HOST:$hp" 2>/dev/null
+        ok "pip 代理已设置: http://$HOST:$hp"
+    else
+        warn "未找到 pip，跳过"
+    fi
+}
+
 remove_all() {
     local rc
     rc=$(get_rc_file)
@@ -327,6 +341,9 @@ remove_all() {
     fi
     command -v npm >/dev/null 2>&1 && { npm config delete proxy 2>/dev/null; npm config delete https-proxy 2>/dev/null; ok "npm 代理已清除"; }
     command -v git >/dev/null 2>&1 && { git config --global --unset http.proxy 2>/dev/null || true; git config --global --unset https.proxy 2>/dev/null || true; ok "git 代理已清除"; }
+    local pip_cmd
+    pip_cmd=$(command -v pip3 2>/dev/null || command -v pip 2>/dev/null || echo "")
+    [[ -n "$pip_cmd" ]] && { "$pip_cmd" config unset global.proxy 2>/dev/null || true; ok "pip 代理已清除"; }
 }
 
 clean_current_env() {
@@ -382,6 +399,15 @@ verify_proxy() {
                     info "无法获取出口 IP（不影响使用）"
                 fi
             fi
+            # 验证 Anthropic API（Claude Code 核心需求）
+            local a_code
+            a_code=$(curl -s -o /dev/null -w "%{http_code}" --proxy "http://$HOST:$hp" \
+                --connect-timeout 8 --max-time 15 "https://api.anthropic.com/v1/models" 2>/dev/null || echo "000")
+            case "$a_code" in
+                200|401|403) ok "Anthropic API 可达 (HTTP $a_code)" ;;
+                000)         warn "Anthropic API 连接失败，Claude Code 可能无法正常使用" ;;
+                *)           warn "Anthropic API 返回 $a_code，请检查节点" ;;
+            esac
         elif [[ "${code:-000}" == "000" ]]; then
             warn "代理连接失败（curl exitcode=${exitcode:-1}），请确认客户端已启动且端口 $hp 正确"
         else
@@ -570,6 +596,7 @@ main() {
                 info "使用端口: HTTP=$hp, SOCKS5=$sp"
                 write_zshrc "$hp" "$sp"
                 configure_npm "$hp"
+                configure_pip "$hp"
                 read -rp "  是否同时配置 git 代理？[y/N] " cfg_git
                 [[ "$cfg_git" == "y" ]] && configure_git "$hp"
                 verify_proxy "$hp"
@@ -591,6 +618,7 @@ main() {
                 sp=${s:-$hp}
                 write_zshrc "$hp" "$sp"
                 configure_npm "$hp"
+                configure_pip "$hp"
                 read -rp "  是否同时配置 git 代理？[y/N] " cfg_git
                 [[ "$cfg_git" == "y" ]] && configure_git "$hp"
                 verify_proxy "$hp"
@@ -627,8 +655,13 @@ main() {
                 ok "检测完成"
                 ;;
             8)
-                clean_current_env
-                show_current_config
+                if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+                    clean_current_env
+                    show_current_config
+                else
+                    warn "此功能仅在 source 模式下有效"
+                    info "请改用: source $(get_rc_file)"
+                fi
                 ;;
             0)
                 echo "退出"

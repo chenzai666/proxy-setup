@@ -3,6 +3,9 @@
 
 set -euo pipefail
 
+_PROXY_SOURCED=0
+[[ "${BASH_SOURCE[0]}" != "$0" ]] && _PROXY_SOURCED=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
 REMOTE_BASE_URL="${PROXY_SETUP_REMOTE_BASE_URL:-https://raw.githubusercontent.com/chenzai666/proxy-setup/master}"
@@ -14,7 +17,12 @@ run_platform_script() {
     local local_script="$SCRIPT_DIR/$script_name"
 
     if [[ -f "$local_script" ]]; then
-        exec bash "$local_script" "$@"
+        if [[ "$_PROXY_SOURCED" == "1" ]]; then
+            . "$local_script"
+        else
+            exec bash "$local_script" "$@"
+        fi
+        return
     fi
 
     TMP_PLATFORM_SCRIPT="$(mktemp "/tmp/${script_name}.XXXXXX")"
@@ -28,7 +36,11 @@ run_platform_script() {
         exit 1
     fi
 
-    bash "$TMP_PLATFORM_SCRIPT" "$@"
+    if [[ "$_PROXY_SOURCED" == "1" ]]; then
+        . "$TMP_PLATFORM_SCRIPT"
+    else
+        bash "$TMP_PLATFORM_SCRIPT" "$@"
+    fi
 }
 
 case "$OS_NAME" in

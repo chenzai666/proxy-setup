@@ -5,8 +5,8 @@
     适用于 Codex CLI / Claude Code / npm / git
 #>
 
-$DEFAULT_HTTP_PORT   = 7890
-$DEFAULT_SOCKS5_PORT = 7891
+$DEFAULT_HTTP_PORT   = 7897
+$DEFAULT_SOCKS5_PORT = 7897
 $PORT_SCAN_RADIUS = 10
 $PROXY_HOST = "127.0.0.1"
 $NO_PROXY = "localhost,127.0.0.1,::1"

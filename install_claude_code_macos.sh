@@ -82,7 +82,8 @@ run_installer() {
         exit 1
     }
 
-    local tmp="/tmp/claude-code-install.sh"
+    local tmp
+    tmp="$(mktemp "/tmp/claude-code-install.XXXXXX.sh")"
     trap 'rm -f "$tmp"' EXIT
 
     info "Downloading Claude Code installer..."

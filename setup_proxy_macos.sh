@@ -186,19 +186,18 @@ auto_detect() {
     local sbp
     sbp=$(detect_singbox_port)
 
-    # Same model as the Windows script: collect candidates, choose the first
-    # one with an actual listening HTTP or SOCKS port, then fall back.
     local candidates=(
         "v2rayN:$vp:$sp"
         "Clash/Mihomo:$cp:$csp"
         "sing-box:$sbp:$((sbp+1))"
     )
-    local candidate name hp socks
+    local candidate name hp socks found
     for candidate in "${candidates[@]}"; do
         IFS=: read -r name hp socks <<< "$candidate"
-        if check_port "$hp" || check_port "$socks"; then
-            info "自动检测: $name 端口 $hp/$socks 正在监听"
-            echo "$hp $socks"
+        found=$(find_listening_port_near "$hp" "$name" 2>/dev/null || true)
+        if [[ -n "$found" ]]; then
+            info "自动检测: $name 端口 $found 正在监听"
+            echo "$found $(( found + socks - hp ))"
             return
         fi
     done

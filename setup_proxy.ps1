@@ -179,9 +179,11 @@ function Auto-DetectPorts {
 
     foreach ($c in $candidates) {
         $hp = $c.Ports[0]; $sp = $c.Ports[1]
-        if ((Check-PortListening $hp) -or (Check-PortListening $sp)) {
-            info "自动检测: $($c.Name) 端口 $hp/$sp 正在监听"
-            return @($hp, $sp)
+        $found = Find-ListeningPortNear $hp $c.Name
+        if ($null -ne $found) {
+            $delta = $sp - $hp
+            info "自动检测: $($c.Name) 端口 $found 正在监听"
+            return @([int]$found, [int]($found + $delta))
         }
     }
     info "未检测到监听端口，使用默认值"

@@ -3,9 +3,10 @@
 Clears Claude Desktop or Claude Code login/session state for a Windows user.
 
 .DESCRIPTION
-By default this removes only per-user Claude Desktop/Electron app data such as
-cookies, local storage, IndexedDB, cache, and Crashpad state. Use -Target Code
-to remove only Claude Code CLI state such as .claude and .claude.json.
+When -Target is not supplied, the script asks whether to clean Claude Desktop
+or Claude Code. Desktop mode removes only per-user Claude Desktop/Electron app
+data such as cookies, local storage, IndexedDB, cache, and Crashpad state. Code
+mode removes only Claude Code CLI state such as .claude and .claude.json.
 
 It does not uninstall Claude and does not delete files outside the selected
 Windows user profile.
@@ -24,8 +25,7 @@ Run with -WhatIf first if you want to preview what will be removed.
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
-    [ValidateSet('Desktop', 'Code')]
-    [string]$Target = 'Desktop',
+    [string]$Target = '',
 
     [string]$UserProfile = $env:USERPROFILE,
 
@@ -136,6 +136,24 @@ function Test-ClaudeCodeProcess {
     )
 }
 
+function Select-CleanupTarget {
+    while ($true) {
+        Write-Host ''
+        Write-Host 'Select cleanup target:'
+        Write-Host '  1) Claude Desktop only'
+        Write-Host '  2) Claude Code only'
+        Write-Host ''
+
+        $choice = Read-Host 'Enter 1 or 2'
+
+        switch -Regex ($choice.Trim()) {
+            '^(1|desktop|d)$' { return 'Desktop' }
+            '^(2|code|c|claude-code)$' { return 'Code' }
+            default { Write-Host 'Invalid choice. Please enter 1 or 2.' }
+        }
+    }
+}
+
 if (-not (Test-Path -LiteralPath $UserProfile)) {
     throw "User profile does not exist: $UserProfile"
 }
@@ -144,12 +162,22 @@ $UserProfile = Resolve-FullPath $UserProfile
 $targets = [System.Collections.Generic.List[string]]::new()
 
 if ($IncludeClaudeCli) {
-    if ($PSBoundParameters.ContainsKey('Target') -and $Target -ne 'Code') {
+    if ($PSBoundParameters.ContainsKey('Target') -and -not [string]::IsNullOrWhiteSpace($Target) -and $Target -ne 'Code') {
         throw 'Do not combine -IncludeClaudeCli with -Target Desktop. Use -Target Code to clean Claude Code only.'
     }
 
     Write-Warning '-IncludeClaudeCli is deprecated. Use -Target Code instead.'
     $Target = 'Code'
+}
+
+if ([string]::IsNullOrWhiteSpace($Target)) {
+    $Target = Select-CleanupTarget
+} elseif ($Target -match '^(?i:desktop|d|1)$') {
+    $Target = 'Desktop'
+} elseif ($Target -match '^(?i:code|c|claude-code|2)$') {
+    $Target = 'Code'
+} else {
+    throw "Invalid -Target '$Target'. Use Desktop or Code."
 }
 
 if ($Target -eq 'Code' -and $IncludeBrowserIndexedDb) {

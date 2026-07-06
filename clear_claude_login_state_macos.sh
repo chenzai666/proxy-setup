@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Clear Claude Desktop or Claude Code login/session state and cache for the
-# current macOS user. Desktop is the default target.
+# current macOS user. If no target is provided, the script asks which one to
+# clean.
 # This does not uninstall Claude.app.
 #
 # Usage:
@@ -12,7 +13,7 @@ set -euo pipefail
 #   bash clear_claude_login_state_macos.sh --target code
 
 dry_run="${DRY_RUN:-0}"
-target="${TARGET:-desktop}"
+target="${TARGET:-}"
 include_claude_cli="${INCLUDE_CLAUDE_CLI:-0}"
 include_browser_site_data="${INCLUDE_BROWSER_SITE_DATA:-0}"
 
@@ -28,7 +29,7 @@ Usage:
   bash clear_claude_login_state_macos.sh [--target desktop|code] [--dry-run]
 
 Targets:
-  desktop   Clear only Claude Desktop app login state and cache. Default.
+  desktop   Clear only Claude Desktop app login state and cache.
   code      Clear only Claude Code CLI login state and cache.
 
 Environment:
@@ -37,6 +38,32 @@ Environment:
   INCLUDE_BROWSER_SITE_DATA=1   Only applies to target=desktop.
   INCLUDE_CLAUDE_CLI=1          Deprecated alias for target=code.
 EOF
+}
+
+select_target() {
+  while true; do
+    say ""
+    say "Select cleanup target:"
+    say "  1) Claude Desktop only"
+    say "  2) Claude Code only"
+    say ""
+    printf 'Enter 1 or 2: '
+    IFS= read -r choice
+
+    case "$choice" in
+      1|desktop|Desktop|d|D)
+        target="desktop"
+        return
+        ;;
+      2|code|Code|claude-code|ClaudeCode|c|C)
+        target="code"
+        return
+        ;;
+      *)
+        say "Invalid choice. Please enter 1 or 2."
+        ;;
+    esac
+  done
 }
 
 remove_path() {
@@ -101,19 +128,23 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$target" in
-  desktop|Desktop)
-    target="desktop"
-    ;;
-  code|Code|claude-code|ClaudeCode)
-    target="code"
-    ;;
-  *)
-    say "Invalid target: $target"
-    usage
-    exit 2
-    ;;
-esac
+if [ -z "$target" ]; then
+  select_target
+else
+  case "$target" in
+    desktop|Desktop|d|D|1)
+      target="desktop"
+      ;;
+    code|Code|claude-code|ClaudeCode|c|C|2)
+      target="code"
+      ;;
+    *)
+      say "Invalid target: $target"
+      usage
+      exit 2
+      ;;
+  esac
+fi
 
 if [ "$target" = "code" ] && [ "$include_browser_site_data" = "1" ]; then
   say "INCLUDE_BROWSER_SITE_DATA=1 only applies to TARGET=desktop and will be ignored."

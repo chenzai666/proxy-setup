@@ -113,10 +113,14 @@ collect_candidates() {
     append_candidate "/usr/local/bin/claude"
     append_candidate "/usr/bin/claude"
 
-    # npm global bin
-    local npm_bin
-    npm_bin="$(npm config get prefix 2>/dev/null)/bin/claude"
-    append_candidate "$npm_bin"
+    # npm global bin is optional. Some minimal Linux systems do not have npm.
+    local npm_prefix
+    if command -v npm >/dev/null 2>&1; then
+        npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+        if [[ -n "$npm_prefix" ]]; then
+            append_candidate "$npm_prefix/bin/claude"
+        fi
+    fi
 
     # XDG / home-dir installs
     shopt -s nullglob

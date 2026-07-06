@@ -262,6 +262,7 @@ bash install_claude_code_linux.sh
 
 支持同名环境变量，rc 文件默认为 bash→`~/.bashrc`，zsh→`~/.zshrc`，fish→`~/.config/fish/config.fish`。
 
+> `npm` 不是此脚本的前置依赖；如果系统已安装 npm，脚本会顺带检查 npm 全局路径里的 `claude`。
 > 如需通过代理下载，请在运行前设置 `http_proxy` / `https_proxy`。
 
 ## Claude 桌面端登录状态清理

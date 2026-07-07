@@ -221,6 +221,7 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy
 proxy-setup/
 ├── install_python.bat              # Windows 一键安装启动器
 ├── install_python.sh               # macOS Bash 版本
+├── install_claude_code_windows.ps1 # Windows Claude Code 安装脚本
 ├── install_claude_code_macos.sh    # macOS Claude Code 安装脚本
 ├── install_claude_code_linux.sh    # Linux Claude Code 安装脚本
 ├── setup_proxy.py                  # Python 代理配置主脚本
@@ -238,6 +239,40 @@ proxy-setup/
 https://github.com/chenzai666/proxy-setup
 
 ## Claude Code 安装
+
+### Windows
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
+```
+
+远程执行：
+
+```powershell
+$u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+```
+
+加速版（jsdelivr CDN，国内更快）：
+
+```powershell
+$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+```
+
+默认使用 Claude Code 官方 Native Install。也可切换为 WinGet：
+
+```powershell
+$env:CLAUDE_CODE_INSTALL_METHOD='winget'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
+```
+
+支持环境变量：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CLAUDE_CODE_SKIP_INSTALL=1` | 跳过下载安装，仅验证/修复 PATH | 否 |
+| `CLAUDE_CODE_INSTALL_METHOD=native|winget` | Windows 安装方式 | `native` |
+| `CLAUDE_CODE_INSTALL_URL=URL` | 覆盖官方 PowerShell 安装脚本地址 | `https://claude.ai/install.ps1` |
+| `CLAUDE_CODE_SKIP_PATH_UPDATE=1` | 不自动写入用户 PATH | 否 |
 
 ### macOS
 

@@ -431,7 +431,16 @@ claude-geo -c
 claude-geo --dangerously-skip-permissions
 ```
 
-如果需要把 `--print-only` 或 `--claude-command` 当作 Claude Code 自己的参数传入，请用 `--` 分隔：
+端口在安装时已自动检测并写入脚本，如需临时切换代理端口，可通过参数覆盖：
+
+```bash
+claude-geo --http-port 7890 --socks-port 7891
+claude-geo --http-port 10808
+```
+
+Windows 版同样支持（也接受 `-HttpPort`、`-SocksPort`、`-ProxyHost` 的 PS 风格写法）。
+
+如果需要把 `--print-only`、`--claude-command` 或上述覆盖参数当作 Claude Code 自己的参数传入，请用 `--` 分隔：
 
 ```bash
 claude-geo -- --print-only

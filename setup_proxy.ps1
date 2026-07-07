@@ -344,6 +344,24 @@ $i = 0
 $passThrough = $false
 while ($i -lt $rawArgs.Count) {
     $arg = [string]$rawArgs[$i]
+    if (-not $passThrough -and ($arg -eq "--proxy-host" -or $arg -eq "-ProxyHost")) {
+        if ($i + 1 -ge $rawArgs.Count) { Write-Error "$arg requires a value"; exit 2 }
+        $ProxyHost = [string]$rawArgs[$i + 1]
+        $i += 2
+        continue
+    }
+    if (-not $passThrough -and ($arg -eq "--http-port" -or $arg -eq "-HttpPort")) {
+        if ($i + 1 -ge $rawArgs.Count) { Write-Error "$arg requires a value"; exit 2 }
+        $HttpPort = [int]$rawArgs[$i + 1]
+        $i += 2
+        continue
+    }
+    if (-not $passThrough -and ($arg -eq "--socks-port" -or $arg -eq "-SocksPort")) {
+        if ($i + 1 -ge $rawArgs.Count) { Write-Error "$arg requires a value"; exit 2 }
+        $SocksPort = [int]$rawArgs[$i + 1]
+        $i += 2
+        continue
+    }
     if (-not $passThrough -and ($arg -eq "--claude-command" -or $arg -eq "-ClaudeCommand")) {
         if ($i + 1 -ge $rawArgs.Count) {
             Write-Error "$arg requires a value"

@@ -314,8 +314,6 @@ PROXY_HOST="127.0.0.1"
 HTTP_PORT=__HTTP_PORT__
 SOCKS_PORT=__SOCKS_PORT__
 NO_PROXY_VALUE="${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,::1}}"
-HTTP_PROXY_URL="http://${PROXY_HOST}:${HTTP_PORT}"
-SOCKS_PROXY_URL="socks5://${PROXY_HOST}:${SOCKS_PORT}"
 IPINFO_TOKEN="${IPINFO_TOKEN:-}"
 CLAUDE_COMMAND="claude"
 PRINT_ONLY=0
@@ -323,12 +321,17 @@ CLAUDE_ARGS=()
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --proxy-host) PROXY_HOST="$2"; shift 2 ;;
+        --http-port)  HTTP_PORT="$2";  shift 2 ;;
+        --socks-port) SOCKS_PORT="$2"; shift 2 ;;
         --claude-command) CLAUDE_COMMAND="$2"; shift 2 ;;
         --print-only) PRINT_ONLY=1; shift ;;
         --) shift; CLAUDE_ARGS=("$@"); break ;;
         *) CLAUDE_ARGS+=("$1"); shift ;;
     esac
 done
+HTTP_PROXY_URL="http://${PROXY_HOST}:${HTTP_PORT}"
+SOCKS_PROXY_URL="socks5://${PROXY_HOST}:${SOCKS_PORT}"
 
 json_value() {
     local key="$1"

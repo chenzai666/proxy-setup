@@ -9,7 +9,7 @@ winget install --id Anthropic.ClaudeCode --exact --source winget
 Set CLAUDE_CODE_INSTALL_METHOD=native to use the official PowerShell installer instead:
 https://claude.ai/install.ps1
 Set CLAUDE_CODE_SKIP_INSTALL=1 to only verify and repair PATH.
-Set CLAUDE_CODE_PROGRESS_SECONDS=10 to change progress heartbeat frequency.
+Set CLAUDE_CODE_PROGRESS_SECONDS=60 to change progress heartbeat frequency.
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
@@ -86,13 +86,13 @@ function Save-Url {
 
 function Get-ProgressIntervalSeconds {
     $raw = $env:CLAUDE_CODE_PROGRESS_SECONDS
-    if ([string]::IsNullOrWhiteSpace($raw)) { return 10 }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return 60 }
     try {
         $value = [int]$raw
         if ($value -lt 2) { return 2 }
         return $value
     } catch {
-        return 10
+        return 60
     }
 }
 

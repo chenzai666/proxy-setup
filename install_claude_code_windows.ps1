@@ -8,6 +8,7 @@ https://claude.ai/install.ps1
 
 Set CLAUDE_CODE_INSTALL_METHOD=winget to install with WinGet instead.
 Set CLAUDE_CODE_SKIP_INSTALL=1 to only verify and repair PATH.
+Set CLAUDE_CODE_PROGRESS_SECONDS=10 to change progress heartbeat frequency.
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
@@ -67,6 +68,11 @@ function Save-Url {
         [string]$OutFile
     )
 
+    if (Test-Path -LiteralPath $Url) {
+        Copy-Item -LiteralPath $Url -Destination $OutFile -Force
+        return
+    }
+
     $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     if ($curl) {
         & $curl.Source -fsSL $Url -o $OutFile
@@ -75,6 +81,97 @@ function Save-Url {
     }
 
     Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $OutFile
+}
+
+function Get-ProgressIntervalSeconds {
+    $raw = $env:CLAUDE_CODE_PROGRESS_SECONDS
+    if ([string]::IsNullOrWhiteSpace($raw)) { return 10 }
+    try {
+        $value = [int]$raw
+        if ($value -lt 2) { return 2 }
+        return $value
+    } catch {
+        return 10
+    }
+}
+
+function Format-Duration {
+    param([TimeSpan]$Duration)
+
+    if ($Duration.TotalHours -ge 1) {
+        return '{0}h {1}m {2}s' -f [int]$Duration.TotalHours, $Duration.Minutes, $Duration.Seconds
+    }
+    if ($Duration.TotalMinutes -ge 1) {
+        return '{0}m {1}s' -f [int]$Duration.TotalMinutes, $Duration.Seconds
+    }
+    return '{0}s' -f [int]$Duration.TotalSeconds
+}
+
+function ConvertTo-CommandLineArgument {
+    param([string]$Path)
+
+    if ($null -eq $Path) { return '""' }
+    if ($Path -notmatch '[\s"]') { return $Path }
+    return '"' + ($Path -replace '"', '\"') + '"'
+}
+
+function Join-ProcessArguments {
+    param([string[]]$Arguments)
+
+    if (-not $Arguments) { return '' }
+    return (($Arguments | ForEach-Object { ConvertTo-CommandLineArgument $_ }) -join ' ')
+}
+
+function Start-ProcessForHeartbeat {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $FilePath
+    $psi.Arguments = Join-ProcessArguments $Arguments
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $false
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $psi
+    if (-not $process.Start()) {
+        throw "Failed to start process: $FilePath"
+    }
+    return $process
+}
+
+function Invoke-ProcessWithHeartbeat {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments,
+        [string]$Label
+    )
+
+    $started = Get-Date
+    $interval = Get-ProgressIntervalSeconds
+
+    $process = Start-ProcessForHeartbeat -FilePath $FilePath -Arguments $Arguments
+    Info "$Label started (PID $($process.Id)). Progress will update every ${interval}s."
+
+    while (-not $process.WaitForExit($interval * 1000)) {
+        $elapsed = (Get-Date) - $started
+        Info "$Label still running... elapsed $(Format-Duration $elapsed)"
+    }
+
+    $process.Refresh()
+    $elapsedTotal = (Get-Date) - $started
+    $exitCode = [int]$process.ExitCode
+
+    if ($exitCode -eq 0) {
+        Ok "$Label finished in $(Format-Duration $elapsedTotal)"
+    } else {
+        Warn "$Label exited with code $exitCode after $(Format-Duration $elapsedTotal)"
+    }
+
+    $process.Dispose()
+    return $exitCode
 }
 
 function Invoke-NativeInstall {
@@ -87,9 +184,9 @@ function Invoke-NativeInstall {
 
         Info 'Running Claude Code installer...'
         $ps = (Get-Command powershell.exe -ErrorAction Stop).Source
-        & $ps -NoProfile -ExecutionPolicy Bypass -File $tmp
-        if ($LASTEXITCODE -ne 0) {
-            throw "Claude Code native installer failed with exit code $LASTEXITCODE"
+        $exitCode = Invoke-ProcessWithHeartbeat -FilePath $ps -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tmp) -Label 'Claude Code installer'
+        if ($exitCode -ne 0) {
+            throw "Claude Code native installer failed with exit code $exitCode"
         }
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue

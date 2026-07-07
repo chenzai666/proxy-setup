@@ -647,32 +647,6 @@ function Show-CurrentConfig {
     if ($anySet) { ok "代理环境变量已生效" }
     else { warn "代理环境变量未生效，请重新打开终端或运行 . `$PROFILE" }
 
-    Write-Host ""
-    bold "  用户级代理配置（GUI 应用新进程会继承）:"
-    Write-Host "  $( '-' * 50 )"
-    $userKeys = @(
-        @{Var="HTTP_PROXY";  Label="HTTP 代理"},
-        @{Var="HTTPS_PROXY"; Label="HTTPS 代理"},
-        @{Var="ALL_PROXY";   Label="SOCKS5 代理"},
-        @{Var="NO_PROXY";    Label="不走代理"}
-    )
-    $anyUserSet = $false
-    foreach ($k in $userKeys) {
-        $v = [Environment]::GetEnvironmentVariable($k.Var, "User")
-        if ($v) {
-            $anyUserSet = $true
-            Write-Host "  " -NoNewline
-            Write-Host $k.Label.PadRight(14) -NoNewline
-            Write-Host " $v" -ForegroundColor Green
-        } else {
-            Write-Host "  " -NoNewline
-            Write-Host $k.Label.PadRight(14) -NoNewline
-            Write-Host " 未设置" -ForegroundColor Yellow
-        }
-    }
-    Write-Host "  $( '-' * 50 )"
-    if ($anyUserSet) { ok "用户级代理变量已配置；重启 GUI 应用后生效" }
-    else { warn "用户级代理变量未配置；从开始菜单/Claude Desktop 启动的进程可能不会继承当前终端代理" }
 }
 
 function Clear-CurrentEnv {
@@ -706,41 +680,6 @@ function Set-EnvCurrentSession($http_port, $socks5_port) {
         [Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", $ANTHROPIC_BASE_URL, "Process")
     }
     ok "当前会话环境变量已设置（仅本终端有效）"
-}
-
-function Set-EnvUserLevel($http_port, $socks5_port) {
-    $proxy_url = "http://${PROXY_HOST}:${http_port}"
-    $socks_url = "socks5://${PROXY_HOST}:${socks5_port}"
-
-    foreach ($v in @(
-        "http_proxy", "https_proxy", "all_proxy", "no_proxy",
-        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"
-    )) {
-        [Environment]::SetEnvironmentVariable($v, $null, "User")
-    }
-
-    [Environment]::SetEnvironmentVariable("HTTP_PROXY",  $proxy_url, "User")
-    [Environment]::SetEnvironmentVariable("HTTPS_PROXY", $proxy_url, "User")
-    [Environment]::SetEnvironmentVariable("ALL_PROXY",   $socks_url, "User")
-    [Environment]::SetEnvironmentVariable("NO_PROXY",    $NO_PROXY, "User")
-    if ($ANTHROPIC_BASE_URL) {
-        [Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", $ANTHROPIC_BASE_URL, "User")
-    }
-
-    ok "用户级代理环境变量已写入（给 GUI 启动的 Claude Desktop / Claude Code / MCP 使用）"
-    warn "请完全退出并重新启动 Claude Desktop、Claude Code 和相关终端，新的用户级变量才会被继承。"
-}
-
-function Clear-EnvUserLevel {
-    foreach ($v in @(
-        "http_proxy", "https_proxy", "all_proxy", "no_proxy",
-        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
-        "ANTHROPIC_BASE_URL"
-    )) {
-        [Environment]::SetEnvironmentVariable($v, $null, "User")
-    }
-    ok "用户级代理环境变量已清理"
-    warn "已运行的程序不会自动变化，请重启 Claude Desktop、Claude Code 和相关终端。"
 }
 
 # ---- Windows 智能DNS 禁用 ----
@@ -1177,8 +1116,6 @@ function Show-Menu {
     Write-Host "  7) 禁用 Windows 智能DNS"
     Write-Host "  8) 检测出口 IP (Claude + OpenAI cf-trace)"
     Write-Host "  9) 清空当前会话环境变量"
-    Write-Host "  10) 写入用户级代理变量（给 GUI / Claude Desktop / Claude Code / MCP）"
-    Write-Host "  11) 清理用户级代理变量"
     Write-Host "  0) 退出"
     Write-Host ""
 }
@@ -1192,7 +1129,7 @@ function Main {
     $running = $true
     while ($running) {
         Show-Menu
-        $choice = Read-Host "请选择 [0-11]"
+        $choice = Read-Host "请选择 [0-9]"
 
         switch ($choice) {
             "0" { Write-Host "退出"; $running = $false; break }
@@ -1273,21 +1210,6 @@ function Main {
             }
             "9" {
                 Clear-CurrentEnv
-                Show-CurrentConfig
-            }
-            "10" {
-                $hp, $sp = Auto-DetectPorts
-                info "使用端口: HTTP=$hp, SOCKS5=$sp"
-                if (Check-PortListening $hp) {
-                    ok "端口 $hp 正在监听"
-                } else {
-                    warn "端口 $hp 未监听，请确认代理客户端已启动"
-                }
-                Set-EnvUserLevel $hp $sp
-                Show-CurrentConfig
-            }
-            "11" {
-                Clear-EnvUserLevel
                 Show-CurrentConfig
             }
             default {

@@ -252,10 +252,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_window
 $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
-加速版（jsdelivr CDN，国内更快）：
+加速版（jsdelivr CDN，国内更快；固定到已验证版本，避免分支缓存）：
 
 ```powershell
-$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@62269d57613df5b8823e7c872b7b41caed0c7c0c/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
 默认使用 WinGet 安装 Claude Code。也可切换为官方 Native Install：

@@ -258,10 +258,10 @@ $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/install_clau
 $u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
-默认使用 Claude Code 官方 Native Install。也可切换为 WinGet：
+默认使用 WinGet 安装 Claude Code。也可切换为官方 Native Install：
 
 ```powershell
-$env:CLAUDE_CODE_INSTALL_METHOD='winget'
+$env:CLAUDE_CODE_INSTALL_METHOD='native'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
 ```
 
@@ -270,12 +270,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_window
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `CLAUDE_CODE_SKIP_INSTALL=1` | 跳过下载安装，仅验证/修复 PATH | 否 |
-| `CLAUDE_CODE_INSTALL_METHOD=native|winget` | Windows 安装方式 | `native` |
+| `CLAUDE_CODE_INSTALL_METHOD=winget|native` | Windows 安装方式 | `winget` |
 | `CLAUDE_CODE_INSTALL_URL=URL` | 覆盖官方 PowerShell 安装脚本地址 | `https://claude.ai/install.ps1` |
 | `CLAUDE_CODE_SKIP_PATH_UPDATE=1` | 不自动写入用户 PATH | 否 |
 | `CLAUDE_CODE_PROGRESS_SECONDS=10` | 安装器运行时的进度提示间隔 | `10` |
 
-Windows Native Install 运行期间会定时输出 `still running... elapsed ...`，表示官方安装器仍在执行。
+Windows 安装器运行期间会定时输出 `still running... elapsed ...`，表示 WinGet 或官方安装器仍在执行。
 
 ### macOS
 

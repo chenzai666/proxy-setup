@@ -3,10 +3,11 @@
 Installs Claude Code on Windows and verifies the `claude` command.
 
 .DESCRIPTION
-By default this script uses the official native Windows installer:
-https://claude.ai/install.ps1
+By default this script installs Claude Code with WinGet:
+winget install --id Anthropic.ClaudeCode --exact --source winget
 
-Set CLAUDE_CODE_INSTALL_METHOD=winget to install with WinGet instead.
+Set CLAUDE_CODE_INSTALL_METHOD=native to use the official PowerShell installer instead:
+https://claude.ai/install.ps1
 Set CLAUDE_CODE_SKIP_INSTALL=1 to only verify and repair PATH.
 Set CLAUDE_CODE_PROGRESS_SECONDS=10 to change progress heartbeat frequency.
 
@@ -14,13 +15,13 @@ Set CLAUDE_CODE_PROGRESS_SECONDS=10 to change progress heartbeat frequency.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
 
 .EXAMPLE
-$env:CLAUDE_CODE_INSTALL_METHOD='winget'; powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
+$env:CLAUDE_CODE_INSTALL_METHOD='native'; powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_windows.ps1
 #>
 
 [CmdletBinding()]
 param(
     [ValidateSet('native', 'winget')]
-    [string]$Method = $(if ($env:CLAUDE_CODE_INSTALL_METHOD) { $env:CLAUDE_CODE_INSTALL_METHOD } else { 'native' }),
+    [string]$Method = $(if ($env:CLAUDE_CODE_INSTALL_METHOD) { $env:CLAUDE_CODE_INSTALL_METHOD } else { 'winget' }),
 
     [string]$InstallUrl = $(if ($env:CLAUDE_CODE_INSTALL_URL) { $env:CLAUDE_CODE_INSTALL_URL } else { 'https://claude.ai/install.ps1' }),
 
@@ -200,9 +201,9 @@ function Invoke-WinGetInstall {
     }
 
     Info 'Installing Claude Code with WinGet...'
-    & $winget.Source install --id Anthropic.ClaudeCode --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
-    if ($LASTEXITCODE -ne 0) {
-        throw "WinGet install failed with exit code $LASTEXITCODE"
+    $exitCode = Invoke-ProcessWithHeartbeat -FilePath $winget.Source -Arguments @('install', '--id', 'Anthropic.ClaudeCode', '--exact', '--source', 'winget', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') -Label 'WinGet installer'
+    if ($exitCode -ne 0) {
+        throw "WinGet install failed with exit code $exitCode"
     }
 }
 

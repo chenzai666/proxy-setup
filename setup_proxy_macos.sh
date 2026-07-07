@@ -27,6 +27,8 @@ CF_TRACE_TARGETS=(
 
 PROXY_BLOCK_START="# >>> proxy-config start <<<"
 PROXY_BLOCK_END="# >>> proxy-config end <<<"
+CLAUDE_GEO_BLOCK_START="# >>> claude-geo start <<<"
+CLAUDE_GEO_BLOCK_END="# >>> claude-geo end <<<"
 # ───────────────────────────────────────────────────────────────
 
 # 颜色输出
@@ -289,6 +291,203 @@ write_zshrc() {
 
 # ─── npm / git ────────────────────────────────────────────────
 
+claude_geo_dir() {
+    printf '%s/.proxy-setup' "$HOME"
+}
+
+claude_geo_launcher_path() {
+    printf '%s/claude-geo' "$(claude_geo_dir)"
+}
+
+install_claude_geo_launcher() {
+    local hp=$1 sp=$2
+    local dir launcher rc body tmp in_block
+    dir="$(claude_geo_dir)"
+    launcher="$(claude_geo_launcher_path)"
+    rc="$(get_rc_file)"
+    mkdir -p "$dir"
+
+    body=$(cat <<'CLAUDE_GEO_SCRIPT'
+#!/usr/bin/env bash
+set -u
+PROXY_HOST="127.0.0.1"
+HTTP_PORT=__HTTP_PORT__
+SOCKS_PORT=__SOCKS_PORT__
+NO_PROXY_VALUE="${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,::1}}"
+HTTP_PROXY_URL="http://${PROXY_HOST}:${HTTP_PORT}"
+SOCKS_PROXY_URL="socks5://${PROXY_HOST}:${SOCKS_PORT}"
+IPINFO_TOKEN="${IPINFO_TOKEN:-}"
+CLAUDE_COMMAND="claude"
+PRINT_ONLY=0
+CLAUDE_ARGS=()
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --claude-command) CLAUDE_COMMAND="$2"; shift 2 ;;
+        --print-only) PRINT_ONLY=1; shift ;;
+        --) shift; CLAUDE_ARGS=("$@"); break ;;
+        *) CLAUDE_ARGS+=("$1"); shift ;;
+    esac
+done
+
+json_value() {
+    local key="$1"
+    sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
+}
+
+fetch_json() {
+    curl -fsS --proxy "$HTTP_PROXY_URL" --connect-timeout 5 --max-time 12 "$1" 2>/dev/null || true
+}
+
+emit_profile() {
+    local provider="$1" json="$2"
+    local ip country region city timezone isp success
+    case "$provider" in
+        ipapi)
+            ip="$(printf '%s' "$json" | json_value ip)"
+            country="$(printf '%s' "$json" | json_value country_code)"
+            region="$(printf '%s' "$json" | json_value region)"
+            city="$(printf '%s' "$json" | json_value city)"
+            timezone="$(printf '%s' "$json" | json_value timezone)"
+            isp="$(printf '%s' "$json" | json_value org)"
+            ;;
+        ipinfo)
+            ip="$(printf '%s' "$json" | json_value ip)"
+            country="$(printf '%s' "$json" | json_value country)"
+            region="$(printf '%s' "$json" | json_value region)"
+            city="$(printf '%s' "$json" | json_value city)"
+            timezone="$(printf '%s' "$json" | json_value timezone)"
+            isp="$(printf '%s' "$json" | json_value org)"
+            ;;
+        *)
+            success="$(printf '%s' "$json" | sed -n 's/.*"success"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' | head -1)"
+            [ "$success" = "true" ] || return 1
+            ip="$(printf '%s' "$json" | json_value ip)"
+            country="$(printf '%s' "$json" | json_value country_code)"
+            region="$(printf '%s' "$json" | json_value region)"
+            city="$(printf '%s' "$json" | json_value city)"
+            timezone="$(printf '%s' "$json" | json_value timezone)"
+            isp="$(printf '%s' "$json" | json_value isp)"
+            ;;
+    esac
+    [ -n "$ip" ] && [ -n "$country" ] && [ -n "$timezone" ] || return 1
+    printf 'ok=true\nprovider=%s\nip=%s\ncountryCode=%s\nregion=%s\ncity=%s\ntimezone=%s\nisp=%s\n' "$provider" "$ip" "$country" "$region" "$city" "$timezone" "$isp"
+}
+
+profile_value() {
+    local key="$1"
+    awk -F= -v k="$key" '$1 == k { print substr($0, length(k) + 2); exit }'
+}
+
+fetch_exit_profile() {
+    local json
+    json="$(fetch_json "https://ipapi.co/json/")"
+    emit_profile ipapi "$json" && return 0
+    if [ -n "$IPINFO_TOKEN" ]; then
+        json="$(fetch_json "https://ipinfo.io/json?token=${IPINFO_TOKEN}")"
+    else
+        json="$(fetch_json "https://ipinfo.io/json")"
+    fi
+    emit_profile ipinfo "$json" && return 0
+    json="$(fetch_json "https://ipwho.is/")"
+    emit_profile ipwhois "$json" && return 0
+    printf 'ok=false\nerror=all providers failed\n'
+}
+
+locale_bundle() {
+    local country_code timezone language base posix_locale
+    country_code="$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
+    timezone="${2:-}"
+    case "$country_code" in
+        CN) language="zh-CN" ;; HK) language="zh-HK" ;; MO) language="zh-MO" ;; TW) language="zh-TW" ;;
+        US) language="en-US" ;; GB) language="en-GB" ;; CA) language="en-CA" ;; AU) language="en-AU" ;; NZ) language="en-NZ" ;; SG) language="en-SG" ;;
+        JP) language="ja-JP" ;; KR) language="ko-KR" ;; DE) language="de-DE" ;; FR) language="fr-FR" ;; IT) language="it-IT" ;; ES) language="es-ES" ;; NL) language="nl-NL" ;;
+        BR) language="pt-BR" ;; PT) language="pt-PT" ;; RU) language="ru-RU" ;; IN) language="en-IN" ;; ID) language="id-ID" ;; TH) language="th-TH" ;; VN) language="vi-VN" ;; PH) language="en-PH" ;; MY) language="ms-MY" ;;
+        *) language="en-US" ;;
+    esac
+    base="${language%%-*}"
+    posix_locale="$(printf '%s.UTF-8' "$(printf '%s' "$language" | tr '-' '_')")"
+    printf 'language=%s\nposixLocale=%s\nacceptLanguage=%s,%s;q=0.9\ntimezone=%s\n' "$language" "$posix_locale" "$language" "$base" "$timezone"
+}
+
+PROFILE_TEXT="$(fetch_exit_profile)"
+PROFILE_OK="$(printf '%s\n' "$PROFILE_TEXT" | profile_value ok)"
+if [ "$PROFILE_OK" != "true" ]; then
+    printf '无法检测代理出口画像: %s\n' "$(printf '%s\n' "$PROFILE_TEXT" | profile_value error)" >&2
+    exit 1
+fi
+EXIT_IP="$(printf '%s\n' "$PROFILE_TEXT" | profile_value ip)"
+EXIT_COUNTRY="$(printf '%s\n' "$PROFILE_TEXT" | profile_value countryCode)"
+EXIT_REGION="$(printf '%s\n' "$PROFILE_TEXT" | profile_value region)"
+EXIT_CITY="$(printf '%s\n' "$PROFILE_TEXT" | profile_value city)"
+EXIT_TIMEZONE="$(printf '%s\n' "$PROFILE_TEXT" | profile_value timezone)"
+BUNDLE="$(locale_bundle "$EXIT_COUNTRY" "$EXIT_TIMEZONE")"
+LANGUAGE_TAG="$(printf '%s\n' "$BUNDLE" | profile_value language)"
+POSIX_LOCALE="$(printf '%s\n' "$BUNDLE" | profile_value posixLocale)"
+ACCEPT_LANGUAGE="$(printf '%s\n' "$BUNDLE" | profile_value acceptLanguage)"
+
+printf 'Claude Code geo profile:\n'
+printf '  Exit: %s %s/%s/%s %s\n' "$EXIT_IP" "$EXIT_COUNTRY" "$EXIT_REGION" "$EXIT_CITY" "$EXIT_TIMEZONE"
+printf '  Locale: %s (%s)\n' "$LANGUAGE_TAG" "$POSIX_LOCALE"
+
+export HTTP_PROXY="$HTTP_PROXY_URL" HTTPS_PROXY="$HTTP_PROXY_URL" ALL_PROXY="$SOCKS_PROXY_URL" NO_PROXY="$NO_PROXY_VALUE"
+export http_proxy="$HTTP_PROXY_URL" https_proxy="$HTTP_PROXY_URL" all_proxy="$SOCKS_PROXY_URL" no_proxy="$NO_PROXY_VALUE"
+export TZ="$EXIT_TIMEZONE" LANG="$POSIX_LOCALE" LC_ALL="$POSIX_LOCALE" LC_MESSAGES="$POSIX_LOCALE" LANGUAGE="$LANGUAGE_TAG" ACCEPT_LANGUAGE="$ACCEPT_LANGUAGE"
+
+if [ "$PRINT_ONLY" = "1" ]; then
+    env | grep -E '^(HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|TZ|LANG|LC_ALL|LC_MESSAGES|LANGUAGE|ACCEPT_LANGUAGE)=' | sort
+    exit 0
+fi
+exec "$CLAUDE_COMMAND" "${CLAUDE_ARGS[@]}"
+CLAUDE_GEO_SCRIPT
+)
+    body="${body//__HTTP_PORT__/$hp}"
+    body="${body//__SOCKS_PORT__/$sp}"
+    printf '%s\n' "$body" > "$launcher"
+    chmod +x "$launcher"
+    ok "已写入 Claude Code 画像启动器: $launcher"
+
+    tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
+    if [[ -f "$rc" ]]; then
+        in_block=0
+        while IFS= read -r line; do
+            if [[ "$line" == "$CLAUDE_GEO_BLOCK_START"* ]]; then in_block=1; continue; fi
+            if [[ "$line" == "$CLAUDE_GEO_BLOCK_END"* ]]; then in_block=0; continue; fi
+            [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
+        done < "$rc"
+    fi
+    {
+        printf '\n%s\n' "$CLAUDE_GEO_BLOCK_START"
+        printf 'claude-geo() { "%s" "$@"; }\n' "$launcher"
+        printf 'alias cgeo=claude-geo\n'
+        printf '%s\n' "$CLAUDE_GEO_BLOCK_END"
+    } >> "$tmp"
+    mv "$tmp" "$rc"
+    ok "已安装 shell 命令: claude-geo (别名 cgeo)"
+    info "以后从新终端运行 claude-geo，即可按当前代理出口自动匹配 TZ/LANG 后启动 Claude Code"
+}
+
+remove_claude_geo_launcher() {
+    local rc tmp in_block launcher
+    rc="$(get_rc_file)"
+    if [[ -f "$rc" ]]; then
+        tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
+        in_block=0
+        while IFS= read -r line; do
+            if [[ "$line" == "$CLAUDE_GEO_BLOCK_START"* ]]; then in_block=1; continue; fi
+            if [[ "$line" == "$CLAUDE_GEO_BLOCK_END"* ]]; then in_block=0; continue; fi
+            [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
+        done < "$rc"
+        mv "$tmp" "$rc"
+        ok "已从 $rc 移除 claude-geo 命令"
+    fi
+    launcher="$(claude_geo_launcher_path)"
+    if [[ -f "$launcher" ]]; then
+        rm -f "$launcher"
+        ok "已删除 $launcher"
+    fi
+}
+
 configure_npm() {
     local hp=$1
     if command -v npm >/dev/null 2>&1; then
@@ -339,6 +538,7 @@ remove_all() {
         mv "$tmp" "$rc"
         ok "已从 $rc 移除代理配置"
     fi
+    remove_claude_geo_launcher
     command -v npm >/dev/null 2>&1 && { npm config delete proxy 2>/dev/null; npm config delete https-proxy 2>/dev/null; ok "npm 代理已清除"; }
     command -v git >/dev/null 2>&1 && { git config --global --unset http.proxy 2>/dev/null || true; git config --global --unset https.proxy 2>/dev/null || true; ok "git 代理已清除"; }
     local pip_cmd
@@ -578,6 +778,7 @@ print_menu() {
     echo "  6) 查看当前代理配置"
     echo "  7) 检测出口 IP (Claude + OpenAI cf-trace)"
     echo "  8) 清空当前会话环境变量"
+    echo "  9) 安装/更新 Claude Code 画像一致启动器 (claude-geo)"
     echo "  0) 退出"
     echo ""
 }
@@ -589,7 +790,7 @@ main() {
 
     while true; do
         print_menu
-        read -rp "请选择 [0-8]: " choice
+        read -rp "请选择 [0-9]: " choice
         case $choice in
             1)
                 read -r hp sp <<< "$(auto_detect)"
@@ -601,6 +802,7 @@ main() {
                 [[ "$cfg_git" == "y" ]] && configure_git "$hp"
                 verify_proxy "$hp"
                 set_env_current "$hp" "$sp"
+                install_claude_geo_launcher "$hp" "$sp"
                 show_current_config
                 echo ""
                 bold "=== 配置完成 ==="
@@ -623,6 +825,7 @@ main() {
                 [[ "$cfg_git" == "y" ]] && configure_git "$hp"
                 verify_proxy "$hp"
                 set_env_current "$hp" "$sp"
+                install_claude_geo_launcher "$hp" "$sp"
                 show_current_config
                 echo ""
                 bold "=== 配置完成 ==="
@@ -662,6 +865,11 @@ main() {
                     warn "此功能仅在 source 模式下有效"
                     info "请改用: source $(get_rc_file)"
                 fi
+                ;;
+            9)
+                read -r hp sp <<< "$(auto_detect)"
+                info "使用端口: HTTP=$hp, SOCKS5=$sp"
+                install_claude_geo_launcher "$hp" "$sp"
                 ;;
             0)
                 echo "退出"

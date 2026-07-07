@@ -22,6 +22,8 @@ $CF_TRACE_TARGETS = @(
 
 $PROXY_BLOCK_START = "# >>> proxy-config start <<<"
 $PROXY_BLOCK_END   = "# >>> proxy-config end <<<"
+$CLAUDE_GEO_BLOCK_START = "# >>> claude-geo start <<<"
+$CLAUDE_GEO_BLOCK_END   = "# >>> claude-geo end <<<"
 
 function info($msg)  { Write-Host "  $msg" }
 function ok($msg)    { Write-Host "  [OK] $msg" -ForegroundColor Green }
@@ -206,6 +208,14 @@ function Get-CmdBatPath {
     return "$env:USERPROFILE\.proxy_init.cmd"
 }
 
+function Get-ClaudeGeoDir {
+    return (Join-Path $env:USERPROFILE ".proxy-setup")
+}
+
+function Get-ClaudeGeoLauncherPath {
+    return (Join-Path (Get-ClaudeGeoDir) "claude-geo.ps1")
+}
+
 function Ensure-CmdProcessorKey {
     $key = "HKCU:\Software\Microsoft\Command Processor"
     if (-not (Test-Path $key)) {
@@ -314,6 +324,267 @@ function Remove-CmdAutoRun {
     }
 }
 
+function Build-ClaudeGeoLauncherScript($http_port, $socks5_port) {
+    $template = @'
+param(
+    [string]$ClaudeCommand = "claude",
+    [switch]$PrintOnly,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$ClaudeArgs
+)
+
+$ProxyHost = "127.0.0.1"
+$HttpPort = __HTTP_PORT__
+$SocksPort = __SOCKS_PORT__
+$NoProxy = if ($env:NO_PROXY) { $env:NO_PROXY } elseif ($env:no_proxy) { $env:no_proxy } else { "localhost,127.0.0.1,::1" }
+$IpinfoToken = $env:IPINFO_TOKEN
+
+function Get-Value($Object, [string]$Name) {
+    if ($null -eq $Object) { return "" }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) { return "" }
+    return [string]$property.Value
+}
+
+function Invoke-ProxyJson([string]$Url) {
+    if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
+        return [ordered]@{ ok = $false; error = "curl.exe not found" }
+    }
+    $proxy = "http://${ProxyHost}:${HttpPort}"
+    $args = @("-sS", "--proxy", $proxy, "--connect-timeout", "5", "--max-time", "12", $Url)
+    try {
+        $output = & curl.exe @args 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            return [ordered]@{ ok = $false; error = ($output -join "`n") }
+        }
+        return [ordered]@{ ok = $true; json = (($output -join "`n") | ConvertFrom-Json) }
+    } catch {
+        return [ordered]@{ ok = $false; error = $_.Exception.Message }
+    }
+}
+
+function Convert-IpApi($Json) {
+    return [ordered]@{
+        ok = [bool](Get-Value $Json "ip")
+        provider = "ipapi"
+        ip = Get-Value $Json "ip"
+        countryCode = (Get-Value $Json "country_code").ToUpperInvariant()
+        country = Get-Value $Json "country_name"
+        region = Get-Value $Json "region"
+        city = Get-Value $Json "city"
+        timezone = Get-Value $Json "timezone"
+        isp = Get-Value $Json "org"
+    }
+}
+
+function Convert-IpInfo($Json) {
+    return [ordered]@{
+        ok = [bool](Get-Value $Json "ip")
+        provider = "ipinfo"
+        ip = Get-Value $Json "ip"
+        countryCode = (Get-Value $Json "country").ToUpperInvariant()
+        country = ""
+        region = Get-Value $Json "region"
+        city = Get-Value $Json "city"
+        timezone = Get-Value $Json "timezone"
+        isp = Get-Value $Json "org"
+    }
+}
+
+function Convert-IpWhoIs($Json) {
+    $connection = $Json.PSObject.Properties["connection"]
+    $isp = ""
+    if ($null -ne $connection -and $null -ne $connection.Value) {
+        $isp = Get-Value $connection.Value "isp"
+        if (-not $isp) { $isp = Get-Value $connection.Value "org" }
+    }
+    return [ordered]@{
+        ok = [bool]$Json.success
+        provider = "ipwhois"
+        ip = Get-Value $Json "ip"
+        countryCode = (Get-Value $Json "country_code").ToUpperInvariant()
+        country = Get-Value $Json "country"
+        region = Get-Value $Json "region"
+        city = Get-Value $Json "city"
+        timezone = Get-Value $Json "timezone"
+        isp = $isp
+    }
+}
+
+function Get-ExitProfile {
+    $providers = @(
+        [ordered]@{ name = "ipapi"; url = "https://ipapi.co/json/" },
+        [ordered]@{ name = "ipinfo"; url = $(if ($IpinfoToken) { "https://ipinfo.io/json?token=$IpinfoToken" } else { "https://ipinfo.io/json" }) },
+        [ordered]@{ name = "ipwhois"; url = "https://ipwho.is/" }
+    )
+    $errors = @()
+    foreach ($provider in $providers) {
+        $response = Invoke-ProxyJson $provider.url
+        if (-not $response.ok) {
+            $errors += "$($provider.name): $($response.error)"
+            continue
+        }
+        if ($provider.name -eq "ipapi") { $profile = Convert-IpApi $response.json }
+        elseif ($provider.name -eq "ipinfo") { $profile = Convert-IpInfo $response.json }
+        else { $profile = Convert-IpWhoIs $response.json }
+        if ($profile.ok -and $profile.ip -and $profile.countryCode -and $profile.timezone) {
+            return $profile
+        }
+        $errors += "$($provider.name): incomplete profile"
+    }
+    return [ordered]@{ ok = $false; error = ($errors -join "; ") }
+}
+
+function Get-LocaleBundle([string]$CountryCode, [string]$TimeZone) {
+    $code = $CountryCode.ToUpperInvariant()
+    $language = switch ($code) {
+        "CN" { "zh-CN"; break }
+        "HK" { "zh-HK"; break }
+        "MO" { "zh-MO"; break }
+        "TW" { "zh-TW"; break }
+        "US" { "en-US"; break }
+        "GB" { "en-GB"; break }
+        "CA" { "en-CA"; break }
+        "AU" { "en-AU"; break }
+        "NZ" { "en-NZ"; break }
+        "SG" { "en-SG"; break }
+        "JP" { "ja-JP"; break }
+        "KR" { "ko-KR"; break }
+        "DE" { "de-DE"; break }
+        "FR" { "fr-FR"; break }
+        "IT" { "it-IT"; break }
+        "ES" { "es-ES"; break }
+        "NL" { "nl-NL"; break }
+        "BR" { "pt-BR"; break }
+        "PT" { "pt-PT"; break }
+        "RU" { "ru-RU"; break }
+        "IN" { "en-IN"; break }
+        "ID" { "id-ID"; break }
+        "TH" { "th-TH"; break }
+        "VN" { "vi-VN"; break }
+        "PH" { "en-PH"; break }
+        "MY" { "ms-MY"; break }
+        default { "en-US"; break }
+    }
+    $base = ($language -split "-")[0]
+    return [ordered]@{
+        language = $language
+        posixLocale = "$($language.Replace("-", "_")).UTF-8"
+        acceptLanguage = "$language,$base;q=0.9"
+        timezone = $TimeZone
+    }
+}
+
+$httpProxy = "http://${ProxyHost}:${HttpPort}"
+$socksProxy = "socks5://${ProxyHost}:${SocksPort}"
+$profile = Get-ExitProfile
+if (-not $profile.ok) {
+    Write-Error "无法检测代理出口画像: $($profile.error)"
+    exit 1
+}
+$bundle = Get-LocaleBundle $profile.countryCode $profile.timezone
+$envValues = @(
+    [pscustomobject]@{ Name = "HTTP_PROXY"; Value = $httpProxy },
+    [pscustomobject]@{ Name = "HTTPS_PROXY"; Value = $httpProxy },
+    [pscustomobject]@{ Name = "ALL_PROXY"; Value = $socksProxy },
+    [pscustomobject]@{ Name = "NO_PROXY"; Value = $NoProxy },
+    [pscustomobject]@{ Name = "http_proxy"; Value = $httpProxy },
+    [pscustomobject]@{ Name = "https_proxy"; Value = $httpProxy },
+    [pscustomobject]@{ Name = "all_proxy"; Value = $socksProxy },
+    [pscustomobject]@{ Name = "no_proxy"; Value = $NoProxy },
+    [pscustomobject]@{ Name = "TZ"; Value = $bundle.timezone },
+    [pscustomobject]@{ Name = "LANG"; Value = $bundle.posixLocale },
+    [pscustomobject]@{ Name = "LC_ALL"; Value = $bundle.posixLocale },
+    [pscustomobject]@{ Name = "LC_MESSAGES"; Value = $bundle.posixLocale },
+    [pscustomobject]@{ Name = "LANGUAGE"; Value = $bundle.language },
+    [pscustomobject]@{ Name = "ACCEPT_LANGUAGE"; Value = $bundle.acceptLanguage }
+)
+
+Write-Host "Claude Code geo profile:"
+Write-Host ("  Exit: {0} {1}/{2}/{3} {4}" -f $profile.ip, $profile.countryCode, $profile.region, $profile.city, $profile.timezone)
+Write-Host ("  Locale: {0} ({1})" -f $bundle.language, $bundle.posixLocale)
+
+foreach ($item in $envValues) {
+    [Environment]::SetEnvironmentVariable($item.Name, [string]$item.Value, "Process")
+}
+
+if ($PrintOnly) {
+    $envValues | Format-Table Name, Value -AutoSize
+    exit 0
+}
+
+$command = Get-Command $ClaudeCommand -ErrorAction SilentlyContinue
+if (-not $command) {
+    Write-Error "找不到 Claude Code 命令: $ClaudeCommand"
+    exit 1
+}
+& $ClaudeCommand @ClaudeArgs
+exit $LASTEXITCODE
+'@
+    $script = $template -replace "__HTTP_PORT__", [string]$http_port
+    return ($script -replace "__SOCKS_PORT__", [string]$socks5_port)
+}
+
+function Install-ClaudeGeoLauncher($http_port, $socks5_port) {
+    $dir = Get-ClaudeGeoDir
+    $launcher = Get-ClaudeGeoLauncherPath
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    Set-Content -Path $launcher -Value (Build-ClaudeGeoLauncherScript $http_port $socks5_port) -Encoding UTF8
+    ok "已写入 Claude Code 画像启动器: $launcher"
+
+    $rc = Get-ProfilePath
+    $dirRc = Split-Path $rc -Parent
+    if (-not (Test-Path $dirRc)) { New-Item -ItemType Directory -Path $dirRc -Force | Out-Null }
+    $escapedLauncher = $launcher.Replace("'", "''")
+    $block = @(
+        $CLAUDE_GEO_BLOCK_START,
+        "function claude-geo {",
+        "    powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$escapedLauncher' @args",
+        "}",
+        "Set-Alias cgeo claude-geo",
+        $CLAUDE_GEO_BLOCK_END
+    ) -join "`r`n"
+    $block += "`r`n"
+
+    $startEsc = [regex]::Escape($CLAUDE_GEO_BLOCK_START)
+    $endEsc = [regex]::Escape($CLAUDE_GEO_BLOCK_END)
+    if (Test-Path $rc) {
+        $content = Get-Content $rc -Raw -Encoding UTF8
+        if ($content -match $startEsc) {
+            $pattern = "(?s)$startEsc.*$endEsc\r?\n?"
+            $content = [regex]::Replace($content, $pattern, $block)
+            Set-Content -Path $rc -Value $content -Encoding UTF8
+        } else {
+            Add-Content -Path $rc -Value "`r`n$block" -Encoding UTF8
+        }
+    } else {
+        Set-Content -Path $rc -Value $block -Encoding UTF8
+    }
+
+    ok "已安装 PowerShell 命令: claude-geo (别名 cgeo)"
+    info "以后从新 PowerShell 窗口运行 claude-geo，即可按当前代理出口自动匹配 TZ/LANG 后启动 Claude Code"
+}
+
+function Remove-ClaudeGeoLauncher {
+    $rc = Get-ProfilePath
+    $startEsc = [regex]::Escape($CLAUDE_GEO_BLOCK_START)
+    $endEsc = [regex]::Escape($CLAUDE_GEO_BLOCK_END)
+    if (Test-Path $rc) {
+        $content = Get-Content $rc -Raw -Encoding UTF8
+        if ($content -match $startEsc) {
+            $pattern = "(?s)$startEsc.*$endEsc\r?\n?"
+            Set-Content -Path $rc -Value ([regex]::Replace($content, $pattern, "")) -Encoding UTF8
+            ok "已从 $rc 移除 claude-geo 命令"
+        }
+    }
+
+    $launcher = Get-ClaudeGeoLauncherPath
+    if (Test-Path $launcher) {
+        Remove-Item $launcher -Force
+        ok "已删除 $launcher"
+    }
+}
+
 function Ensure-PowerShellExecutionPolicy {
     try {
         $machinePolicy = Get-ExecutionPolicy -Scope MachinePolicy -ErrorAction SilentlyContinue
@@ -365,6 +636,7 @@ function Remove-Proxy {
     }
 
     Remove-CmdAutoRun
+    Remove-ClaudeGeoLauncher
 
     $npm = Get-NpmCommand
     if ($npm) {
@@ -1116,6 +1388,7 @@ function Show-Menu {
     Write-Host "  7) 禁用 Windows 智能DNS"
     Write-Host "  8) 检测出口 IP (Claude + OpenAI cf-trace)"
     Write-Host "  9) 清空当前会话环境变量"
+    Write-Host "  10) 安装/更新 Claude Code 画像一致启动器 (claude-geo)"
     Write-Host "  0) 退出"
     Write-Host ""
 }
@@ -1129,7 +1402,7 @@ function Main {
     $running = $true
     while ($running) {
         Show-Menu
-        $choice = Read-Host "请选择 [0-9]"
+        $choice = Read-Host "请选择 [0-10]"
 
         switch ($choice) {
             "0" { Write-Host "退出"; $running = $false; break }
@@ -1152,6 +1425,7 @@ function Main {
 
                 Test-ProxyConnectivity $hp
                 Set-EnvCurrentSession $hp $sp
+                Install-ClaudeGeoLauncher $hp $sp
                 Show-CurrentConfig
 
                 Write-Host ""
@@ -1159,6 +1433,7 @@ function Main {
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
                 Write-Host "  PowerShell 当前窗口可运行: . `$PROFILE"
                 Write-Host "  CMD 已配置 AutoRun，新窗口自动加载"
+                Write-Host "  Claude Code 画像一致启动: claude-geo"
             }
             "2" {
                 $h = Read-Host "  输入 HTTP 代理端口 [默认 $DEFAULT_HTTP_PORT]"
@@ -1176,11 +1451,13 @@ function Main {
 
                 Test-ProxyConnectivity $hp
                 Set-EnvCurrentSession $hp $sp
+                Install-ClaudeGeoLauncher $hp $sp
                 Show-CurrentConfig
 
                 Write-Host ""
                 bold "=== 配置完成 ==="
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
+                Write-Host "  Claude Code 画像一致启动: claude-geo"
             }
             "3" {
                 Remove-Proxy
@@ -1211,6 +1488,11 @@ function Main {
             "9" {
                 Clear-CurrentEnv
                 Show-CurrentConfig
+            }
+            "10" {
+                $hp, $sp = Auto-DetectPorts
+                info "使用端口: HTTP=$hp, SOCKS5=$sp"
+                Install-ClaudeGeoLauncher $hp $sp
             }
             default {
                 warn "无效选项，请重新输入"

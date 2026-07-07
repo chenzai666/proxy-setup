@@ -394,3 +394,39 @@ bash clear_claude_login_state_macos.sh --target code
 如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在选择桌面端时加 `INCLUDE_BROWSER_SITE_DATA=1`。
 
 > 如果 CDN 未刷新，可先访问 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state.ps1` 和 `https://purge.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh` 清缓存后再运行。
+## Claude Code 画像一致启动器
+
+`proxy-setup` 会安装一个 `claude-geo` 启动命令，用来让 Claude Code 的运行时画像尽量和当前代理出口 IP 保持一致。
+
+它不是永久写死某个时区或语言，而是每次启动前重新检测当前代理出口 IP，并临时注入到这次 Claude Code 进程：
+
+- `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`
+- `TZ`
+- `LANG` / `LC_ALL` / `LC_MESSAGES` / `LANGUAGE`
+- `ACCEPT_LANGUAGE`
+
+Windows PowerShell 版：
+
+- 菜单 `1` / `2` 配置代理时会自动安装或更新 `claude-geo`
+- 菜单 `10` 可单独安装或更新 `claude-geo`
+- 菜单 `3` 移除代理时会同时移除 `claude-geo`
+
+macOS Bash 版：
+
+- 菜单 `1` / `2` 配置代理时会自动安装或更新 `claude-geo`
+- 菜单 `9` 可单独安装或更新 `claude-geo`
+- 菜单 `3` 移除代理时会同时移除 `claude-geo`
+
+安装后重新打开终端，使用：
+
+```bash
+claude-geo
+```
+
+或短别名：
+
+```bash
+cgeo
+```
+
+注意：`TZ` 对 Node/Claude Code 的时区通常有效；语言会按出口 IP 注入到 `LANG`、`LC_ALL`、`LANGUAGE`、`ACCEPT_LANGUAGE`。语言变量对 macOS/Linux 更容易影响运行时 locale；Windows 上 Node/Bun 的默认 `Intl` locale 往往来自系统区域设置，`LANG/LC_ALL` 不一定能把 `Intl.DateTimeFormat().resolvedOptions().locale` 改掉。如需完全改变这一项，需要修改 Windows 用户区域设置，这会影响整个用户账户，脚本不会默认执行。

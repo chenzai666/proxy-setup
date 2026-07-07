@@ -148,9 +148,16 @@ bash setup_proxy.sh
 ### 代理配置项
 
 脚本配置的代理范围包括：
-- Shell 环境变量（`http_proxy` / `https_proxy` / `all_proxy`）写入 shell rc 文件
+- Shell 环境变量（`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 及小写别名）写入 shell rc 文件
 - `git` 全局代理
 - `pip` 全局代理（`~/.config/pip/pip.conf` / `%APPDATA%\pip\pip.ini`）
+
+Windows PowerShell 版还提供用户级环境变量菜单，用来覆盖从开始菜单、Claude Desktop、Codex 桌面壳等 GUI 入口启动的 Claude Code / MCP 子进程：
+
+- **10) 写入用户级代理变量**：写入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 到当前 Windows 用户环境。
+- **11) 清理用户级代理变量**：删除上述用户级变量。
+
+用户级变量不会影响已经运行的进程；写入或清理后，需要完全退出并重新启动 Claude Desktop、Claude Code 和相关终端。
 
 ### Claude / OpenAI 出口 IP 检测
 
@@ -181,6 +188,8 @@ bash setup_proxy.sh
 - **Bash 版** (`setup_proxy_macos.sh`)：菜单选项 `8`
 - **PowerShell 版** (`setup_proxy.ps1`)：菜单选项 `9`
 - **Python 版** (`setup_proxy.py`)：Windows 菜单选项 `9`，macOS 菜单选项 `8`（仅影响脚本进程本身）
+
+如果要清理 Windows 用户级代理变量，请使用 PowerShell 版菜单选项 `11`。
 
 手动清理命令：
 

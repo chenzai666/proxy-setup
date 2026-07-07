@@ -405,11 +405,12 @@ bash clear_claude_login_state_macos.sh --target code
 - `LANG` / `LC_ALL` / `LC_MESSAGES` / `LANGUAGE`
 - `ACCEPT_LANGUAGE`
 
-Windows PowerShell 版：
+Windows 版：
 
 - 菜单 `1` / `2` 配置代理时会自动安装或更新 `claude-geo`
 - 菜单 `10` 可单独安装或更新 `claude-geo`
 - 菜单 `3` 移除代理时会同时移除 `claude-geo`
+- 安装时会生成 `claude-geo.ps1` 和 `claude-geo.cmd`，并把 `%USERPROFILE%\.proxy-setup` 加入用户 PATH；重新打开 PowerShell 或 CMD 后都可以直接运行 `claude-geo`
 
 macOS Bash 版：
 
@@ -421,6 +422,19 @@ macOS Bash 版：
 
 ```bash
 claude-geo
+```
+
+Claude Code 参数会原样透传，例如：
+
+```bash
+claude-geo -c
+claude-geo --dangerously-skip-permissions
+```
+
+如果需要把 `--print-only` 或 `--claude-command` 当作 Claude Code 自己的参数传入，请用 `--` 分隔：
+
+```bash
+claude-geo -- --print-only
 ```
 
 或短别名：

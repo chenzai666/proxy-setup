@@ -216,6 +216,10 @@ function Get-ClaudeGeoLauncherPath {
     return (Join-Path (Get-ClaudeGeoDir) "claude-geo.ps1")
 }
 
+function Get-ClaudeGeoCmdPath {
+    return (Join-Path (Get-ClaudeGeoDir) "claude-geo.cmd")
+}
+
 function Ensure-CmdProcessorKey {
     $key = "HKCU:\Software\Microsoft\Command Processor"
     if (-not (Test-Path $key)) {
@@ -326,18 +330,43 @@ function Remove-CmdAutoRun {
 
 function Build-ClaudeGeoLauncherScript($http_port, $socks5_port) {
     $template = @'
-param(
-    [string]$ClaudeCommand = "claude",
-    [switch]$PrintOnly,
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$ClaudeArgs
-)
-
 $ProxyHost = "127.0.0.1"
 $HttpPort = __HTTP_PORT__
 $SocksPort = __SOCKS_PORT__
 $NoProxy = if ($env:NO_PROXY) { $env:NO_PROXY } elseif ($env:no_proxy) { $env:no_proxy } else { "localhost,127.0.0.1,::1" }
 $IpinfoToken = $env:IPINFO_TOKEN
+$ClaudeCommand = "claude"
+$PrintOnly = $false
+$claudeArgsList = New-Object System.Collections.Generic.List[string]
+
+$rawArgs = @($args)
+$i = 0
+$passThrough = $false
+while ($i -lt $rawArgs.Count) {
+    $arg = [string]$rawArgs[$i]
+    if (-not $passThrough -and ($arg -eq "--claude-command" -or $arg -eq "-ClaudeCommand")) {
+        if ($i + 1 -ge $rawArgs.Count) {
+            Write-Error "$arg requires a value"
+            exit 2
+        }
+        $ClaudeCommand = [string]$rawArgs[$i + 1]
+        $i += 2
+        continue
+    }
+    if (-not $passThrough -and ($arg -eq "--print-only" -or $arg -eq "-PrintOnly")) {
+        $PrintOnly = $true
+        $i += 1
+        continue
+    }
+    if (-not $passThrough -and $arg -eq "--") {
+        $passThrough = $true
+        $i += 1
+        continue
+    }
+    $claudeArgsList.Add($arg)
+    $i += 1
+}
+$ClaudeArgs = [string[]]$claudeArgsList.ToArray()
 
 function Get-Value($Object, [string]$Name) {
     if ($null -eq $Object) { return "" }
@@ -525,12 +554,79 @@ exit $LASTEXITCODE
     return ($script -replace "__SOCKS_PORT__", [string]$socks5_port)
 }
 
+function Build-ClaudeGeoCmdScript {
+    return @'
+@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0claude-geo.ps1" %*
+exit /b %ERRORLEVEL%
+'@
+}
+
+function Add-ClaudeGeoDirToUserPath {
+    $dir = Get-ClaudeGeoDir
+    $current = [Environment]::GetEnvironmentVariable("Path", "User")
+    $entries = @()
+    if ($current) {
+        $entries = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+    $exists = $false
+    foreach ($entry in $entries) {
+        if ($entry.TrimEnd('\') -ieq $dir.TrimEnd('\')) {
+            $exists = $true
+            break
+        }
+    }
+    if (-not $exists) {
+        $newPath = if ($current) { "$current;$dir" } else { $dir }
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        ok "已加入用户 PATH: $dir"
+    } else {
+        ok "用户 PATH 已包含: $dir"
+    }
+
+    $processEntries = @($env:Path -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $processExists = $false
+    foreach ($entry in $processEntries) {
+        if ($entry.TrimEnd('\') -ieq $dir.TrimEnd('\')) {
+            $processExists = $true
+            break
+        }
+    }
+    if (-not $processExists) {
+        $env:Path = "$dir;$env:Path"
+    }
+}
+
+function Remove-ClaudeGeoDirFromUserPath {
+    $dir = Get-ClaudeGeoDir
+    $current = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($current) {
+        $entries = @($current -split ';' | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_) -and $_.TrimEnd('\') -ine $dir.TrimEnd('\')
+        })
+        $newPath = ($entries -join ';')
+        if ($newPath -ne $current) {
+            [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+            ok "已从用户 PATH 移除: $dir"
+        }
+    }
+    if ($env:Path) {
+        $env:Path = ((@($env:Path -split ';') | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_) -and $_.TrimEnd('\') -ine $dir.TrimEnd('\')
+        }) -join ';')
+    }
+}
+
 function Install-ClaudeGeoLauncher($http_port, $socks5_port) {
     $dir = Get-ClaudeGeoDir
     $launcher = Get-ClaudeGeoLauncherPath
+    $cmdLauncher = Get-ClaudeGeoCmdPath
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     Set-Content -Path $launcher -Value (Build-ClaudeGeoLauncherScript $http_port $socks5_port) -Encoding UTF8
     ok "已写入 Claude Code 画像启动器: $launcher"
+    Set-Content -Path $cmdLauncher -Value (Build-ClaudeGeoCmdScript) -Encoding ASCII
+    ok "已写入 CMD 启动器: $cmdLauncher"
+    Add-ClaudeGeoDirToUserPath
 
     $rc = Get-ProfilePath
     $dirRc = Split-Path $rc -Parent
@@ -562,7 +658,7 @@ function Install-ClaudeGeoLauncher($http_port, $socks5_port) {
     }
 
     ok "已安装 PowerShell 命令: claude-geo (别名 cgeo)"
-    info "以后从新 PowerShell 窗口运行 claude-geo，即可按当前代理出口自动匹配 TZ/LANG 后启动 Claude Code"
+    info "以后从新 PowerShell/CMD 窗口运行 claude-geo，即可按当前代理出口自动匹配 TZ/LANG 后启动 Claude Code"
 }
 
 function Remove-ClaudeGeoLauncher {
@@ -583,6 +679,12 @@ function Remove-ClaudeGeoLauncher {
         Remove-Item $launcher -Force
         ok "已删除 $launcher"
     }
+    $cmdLauncher = Get-ClaudeGeoCmdPath
+    if (Test-Path $cmdLauncher) {
+        Remove-Item $cmdLauncher -Force
+        ok "已删除 $cmdLauncher"
+    }
+    Remove-ClaudeGeoDirFromUserPath
 }
 
 function Ensure-PowerShellExecutionPolicy {

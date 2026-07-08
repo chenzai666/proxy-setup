@@ -1545,7 +1545,6 @@ function Main {
 
                 Test-ProxyConnectivity $hp
                 Set-EnvCurrentSession $hp $sp
-                Install-ClaudeGeoLauncher $hp $sp
                 Show-CurrentConfig
 
                 Write-Host ""
@@ -1553,7 +1552,7 @@ function Main {
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
                 Write-Host "  PowerShell 当前窗口可运行: . `$PROFILE"
                 Write-Host "  CMD 已配置 AutoRun，新窗口自动加载"
-                Write-Host "  Claude Code 画像一致启动: claude-geo"
+                Write-Host "  如需安装 Claude Code 画像一致启动器，请在主菜单选择 10"
             }
             "2" {
                 $h = Read-Host "  输入 HTTP 代理端口 [默认 $DEFAULT_HTTP_PORT]"
@@ -1571,13 +1570,12 @@ function Main {
 
                 Test-ProxyConnectivity $hp
                 Set-EnvCurrentSession $hp $sp
-                Install-ClaudeGeoLauncher $hp $sp
                 Show-CurrentConfig
 
                 Write-Host ""
                 bold "=== 配置完成 ==="
                 bold "  请重新打开 CMD / PowerShell 窗口使代理生效。"
-                Write-Host "  Claude Code 画像一致启动: claude-geo"
+                Write-Host "  如需安装 Claude Code 画像一致启动器，请在主菜单选择 10"
             }
             "3" {
                 Remove-Proxy

@@ -805,7 +805,6 @@ main() {
                 [[ "$cfg_git" == "y" ]] && configure_git "$hp"
                 verify_proxy "$hp"
                 set_env_current "$hp" "$sp"
-                install_claude_geo_launcher "$hp" "$sp"
                 show_current_config
                 echo ""
                 bold "=== 配置完成 ==="
@@ -815,6 +814,7 @@ main() {
                 bold "  请运行以下命令使环境变量立即生效（当前终端）："
                 printf '    \033[0;36msource %s\033[0m\n' "$rc"
                 echo "  或重新打开终端后自动生效。"
+                info "如需安装 Claude Code 画像一致启动器，请在主菜单选择 9"
                 ;;
             2)
                 read -rp "  输入 HTTP 代理端口 [默认 $DEFAULT_HTTP_PORT]: " h
@@ -828,7 +828,6 @@ main() {
                 [[ "$cfg_git" == "y" ]] && configure_git "$hp"
                 verify_proxy "$hp"
                 set_env_current "$hp" "$sp"
-                install_claude_geo_launcher "$hp" "$sp"
                 show_current_config
                 echo ""
                 bold "=== 配置完成 ==="
@@ -836,6 +835,7 @@ main() {
                 info "防泄漏：v2rayN 开启 TUN 模式 / 浏览器设 SOCKS5 并关闭系统 DNS"
                 echo ""
                 bold "  请运行: source $rc"
+                info "如需安装 Claude Code 画像一致启动器，请在主菜单选择 9"
                 ;;
             3)
                 remove_all

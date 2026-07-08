@@ -388,7 +388,7 @@ bash clear_claude_login_state_macos.sh --target code
 > CDN 可能有缓存延迟；需要立即使用最新版本时，请优先用 raw.githubusercontent 命令。
 ## Claude Code 画像一致启动器
 
-`proxy-setup` 会安装一个 `claude-geo` 启动命令，用来让 Claude Code 的运行时画像尽量和当前代理出口 IP 保持一致。
+`proxy-setup` 可以通过菜单安装一个 `claude-geo` 启动命令，用来让 Claude Code 的运行时画像尽量和当前代理出口 IP 保持一致。
 
 它不是永久写死某个时区或语言，而是每次启动前重新检测当前代理出口 IP，并临时注入到这次 Claude Code 进程：
 
@@ -399,15 +399,15 @@ bash clear_claude_login_state_macos.sh --target code
 
 Windows 版：
 
-- 菜单 `1` / `2` 配置代理时会自动安装或更新 `claude-geo`
-- 菜单 `10` 可单独安装或更新 `claude-geo`
+- 菜单 `1` / `2` 只配置代理，不会自动安装 `claude-geo`
+- 菜单 `10` 安装或更新 `claude-geo`
 - 菜单 `3` 移除代理时会同时移除 `claude-geo`
 - 安装时会生成 `claude-geo.ps1` 和 `claude-geo.cmd`，并把 `%USERPROFILE%\.proxy-setup` 加入用户 PATH；重新打开 PowerShell 或 CMD 后都可以直接运行 `claude-geo`
 
 macOS Bash 版：
 
-- 菜单 `1` / `2` 配置代理时会自动安装或更新 `claude-geo`
-- 菜单 `9` 可单独安装或更新 `claude-geo`
+- 菜单 `1` / `2` 只配置代理，不会自动安装 `claude-geo`
+- 菜单 `9` 安装或更新 `claude-geo`
 - 菜单 `3` 移除代理时会同时移除 `claude-geo`
 
 安装后重新打开终端，使用：

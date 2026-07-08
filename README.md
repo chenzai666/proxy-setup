@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup
 **Windows (CMD) 加速版（jsdelivr CDN 固定版本模板）：**
 
 ```bat
-set COMMIT=<commit-hash>
+set COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e
 set PROXY_SETUP_REMOTE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@%COMMIT%/setup_proxy.ps1
 curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@%COMMIT%/setup_proxy_cmd.txt -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
 ```
@@ -75,16 +75,8 @@ curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@%COMMIT%/setup_pro
 **Windows 加速版（jsdelivr CDN 固定版本模板）：**
 
 ```powershell
-$commit='<commit-hash>';$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString("https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/setup_proxy.ps1"))
+$commit='e1390944c26f6dc7814170fa3202a2a20595b96e';$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString("https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/setup_proxy.ps1"))
 ```
-
-**Windows 固定版本（彻底避开 CDN 缓存漂移）：**
-
-```powershell
-$commit='<commit-hash>';$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString("https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/setup_proxy.ps1"))
-```
-
-> 将 `<commit-hash>` 替换为任意 commit hash 可锁定到指定版本；固定 commit 不会随 master 更新。
 
 **macOS（自动识别平台）:**
 
@@ -98,7 +90,7 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 **macOS 加速版（jsdelivr CDN 固定版本模板）：**
 
 ```bash
-COMMIT=<commit-hash>; curl -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/setup_proxy.sh" -o /tmp/sp.sh && PROXY_SETUP_REMOTE_BASE_URL="https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT" bash /tmp/sp.sh; rm -f /tmp/sp.sh
+COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e; curl -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/setup_proxy.sh" -o /tmp/sp.sh && PROXY_SETUP_REMOTE_BASE_URL="https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT" bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
 **macOS 专用：**
@@ -110,7 +102,7 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 **macOS 专用加速版（jsdelivr CDN 固定版本模板）：**
 
 ```bash
-COMMIT=<commit-hash>; curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/setup_proxy_macos.sh" -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
+COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e; curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/setup_proxy_macos.sh" -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
 macOS 版本默认写入 `~/.zshrc`，如需写入 bash 配置可先设置 `PROXY_SETUP_RC_FILE=$HOME/.bash_profile`；不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。
@@ -341,7 +333,7 @@ $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude
 远程一行命令加速版（jsDelivr CDN 固定版本模板）：
 
 ```powershell
-$commit='<commit-hash>';$u="https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/clear_claude_login_state.ps1";$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+$commit='e1390944c26f6dc7814170fa3202a2a20595b96e';$u="https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/clear_claude_login_state.ps1";$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
 预演，不真正删除：
@@ -376,7 +368,7 @@ curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear
 远程一行命令加速版（jsDelivr CDN 固定版本模板）：
 
 ```bash
-COMMIT=<commit-hash>; curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/clear_claude_login_state_macos.sh" -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
+COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e; curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/clear_claude_login_state_macos.sh" -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
 ```
 
 预演，不真正删除：

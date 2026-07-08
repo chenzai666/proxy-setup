@@ -62,20 +62,19 @@ curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup
 
 > CMD 版本是启动器：优先运行同目录的 `setup_proxy.ps1`，远程执行时会自动下载并调用 PowerShell 版，不依赖 Python。
 
-**Windows (CMD) 加速版（jsdelivr CDN 固定版本模板）：**
+**Windows (CMD) 加速版（jsdelivr CDN）：**
 
 ```bat
-set COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e
-set PROXY_SETUP_REMOTE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@%COMMIT%/setup_proxy.ps1
-curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@%COMMIT%/setup_proxy_cmd.txt -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
+set PROXY_SETUP_REMOTE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1
+curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_cmd.txt -o %TEMP%\setup_proxy.cmd && %TEMP%\setup_proxy.cmd && del %TEMP%\setup_proxy.cmd
 ```
 
-> jsdelivr 会拦截 `.cmd` 文件并返回 403，所以 CMD 加速版下载同内容的 `setup_proxy_cmd.txt` 并保存为 `.cmd` 运行。固定 commit 可避开分支缓存漂移。
+> jsdelivr 会拦截 `.cmd` 文件并返回 403，所以 CMD 加速版下载同内容的 `setup_proxy_cmd.txt` 并保存为 `.cmd` 运行。CDN 可能有缓存延迟；需要立即使用最新版本时，请优先用上面的 raw.githubusercontent 命令。
 
-**Windows 加速版（jsdelivr CDN 固定版本模板）：**
+**Windows 加速版（jsdelivr CDN）：**
 
 ```powershell
-$commit='e1390944c26f6dc7814170fa3202a2a20595b96e';$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString("https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/setup_proxy.ps1"))
+$w=New-Object Net.WebClient;$w.Encoding=[Text.Encoding]::UTF8;iex($w.DownloadString('https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.ps1'))
 ```
 
 **macOS（自动识别平台）:**
@@ -87,10 +86,10 @@ curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_
 > 注：不能直接 `curl | bash`，管道会抢占 stdin 导致 `read` 无法交互。
 > 分发入口会在同目录缺少 `setup_proxy_macos.sh` 时自动下载 macOS 专用脚本。
 
-**macOS 加速版（jsdelivr CDN 固定版本模板）：**
+**macOS 加速版（jsdelivr CDN）：**
 
 ```bash
-COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e; curl -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/setup_proxy.sh" -o /tmp/sp.sh && PROXY_SETUP_REMOTE_BASE_URL="https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT" bash /tmp/sp.sh; rm -f /tmp/sp.sh
+curl -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy.sh -o /tmp/sp.sh && PROXY_SETUP_REMOTE_BASE_URL=https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
 **macOS 专用：**
@@ -99,10 +98,10 @@ COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e; curl -fsSL "https://cdn.jsdeliv
 curl -sSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/setup_proxy_macos.sh -o /tmp/sp.sh && bash /tmp/sp.sh && rm /tmp/sp.sh
 ```
 
-**macOS 专用加速版（jsdelivr CDN 固定版本模板）：**
+**macOS 专用加速版（jsdelivr CDN）：**
 
 ```bash
-COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e; curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/setup_proxy_macos.sh" -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
+curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/setup_proxy_macos.sh -o /tmp/sp.sh && bash /tmp/sp.sh; rm -f /tmp/sp.sh
 ```
 
 macOS 版本默认写入 `~/.zshrc`，如需写入 bash 配置可先设置 `PROXY_SETUP_RC_FILE=$HOME/.bash_profile`；不会因为用 `bash /tmp/sp.sh` 执行就误写到 `~/.bashrc`。
@@ -247,10 +246,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install_claude_code_window
 $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
-加速版（jsdelivr CDN，国内更快；固定到已验证版本，避免分支缓存）：
+加速版（jsdelivr CDN，国内更快；跟随 master 最新版本，CDN 可能有缓存延迟）：
 
 ```powershell
-$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@62269d57613df5b8823e7c872b7b41caed0c7c0c/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/install_claude_code_windows.ps1';$p="$env:TEMP\install_claude_code_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
 默认使用 WinGet 安装 Claude Code。也可切换为官方 Native Install：
@@ -330,10 +329,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.p
 $u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
-远程一行命令加速版（jsDelivr CDN 固定版本模板）：
+远程一行命令加速版（jsDelivr CDN）：
 
 ```powershell
-$commit='e1390944c26f6dc7814170fa3202a2a20595b96e';$u="https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$commit/clear_claude_login_state.ps1";$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state.ps1';$p="$env:TEMP\clear_claude_login_state.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
 ```
 
 预演，不真正删除：
@@ -365,10 +364,10 @@ bash clear_claude_login_state_macos.sh
 curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
 ```
 
-远程一行命令加速版（jsDelivr CDN 固定版本模板）：
+远程一行命令加速版（jsDelivr CDN）：
 
 ```bash
-COMMIT=e1390944c26f6dc7814170fa3202a2a20595b96e; curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@$COMMIT/clear_claude_login_state_macos.sh" -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
+curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
 ```
 
 预演，不真正删除：
@@ -386,7 +385,7 @@ bash clear_claude_login_state_macos.sh --target code
 
 如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在选择桌面端时加 `INCLUDE_BROWSER_SITE_DATA=1`。
 
-> 固定 commit 可避开 jsDelivr 分支缓存漂移。
+> CDN 可能有缓存延迟；需要立即使用最新版本时，请优先用 raw.githubusercontent 命令。
 ## Claude Code 画像一致启动器
 
 `proxy-setup` 会安装一个 `claude-geo` 启动命令，用来让 Claude Code 的运行时画像尽量和当前代理出口 IP 保持一致。

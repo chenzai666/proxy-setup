@@ -84,8 +84,11 @@ remove_path() {
   if [ "$dry_run" = "1" ]; then
     say "Would remove: $path"
   else
-    rm -rf "$path" || true
-    say "Removed: $path"
+    if rm -rf "$path" 2>/dev/null; then
+      say "Removed: $path"
+    else
+      say "Warning: could not remove $path (check permissions)"
+    fi
   fi
 }
 
@@ -208,9 +211,9 @@ fi
 if [ "$target" = "code" ]; then
   say "Stopping Claude Code..."
   if [ "$dry_run" = "1" ]; then
-    say "Would run: pkill -x claude"
+    say "Would run: pkill -f claude"
   else
-    pkill -x claude >/dev/null 2>&1 || true
+    pkill -f 'claude' >/dev/null 2>&1 || true
   fi
 
   say "Removing Claude Code config, credentials, and cache..."

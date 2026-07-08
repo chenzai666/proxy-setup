@@ -146,8 +146,9 @@ detect_singbox_port() {
     )
     for cfg in "${configs[@]}"; do
         [[ -f "$cfg" ]] || continue
-        port=$(grep -oE '"listen_port"[[:space:]]*:[[:space:]]*[0-9]+' "$cfg" 2>/dev/null | grep -oE "[0-9]+" | head -1 || echo "")
-        [[ -n "$port" ]] && { info "检测到 sing-box 端口: $port  ($cfg)"; echo "$port"; return; }
+        local _p
+        _p=$(grep -oE '"listen_port"[[:space:]]*:[[:space:]]*[0-9]+' "$cfg" 2>/dev/null | grep -oE "[0-9]+" | head -1)
+        [[ -n "$_p" ]] && { info "检测到 sing-box 端口: $_p  ($cfg)"; echo "$_p"; return; }
     done
     echo "$port"
 }

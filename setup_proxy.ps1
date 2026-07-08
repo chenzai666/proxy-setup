@@ -774,7 +774,7 @@ function Remove-Proxy {
     $pip = Get-PipCommand
     if ($pip) {
         & $pip config unset global.proxy 2>$null
-        ok "pip 代理已清除"
+        if ($LASTEXITCODE -eq 0) { ok "pip 代理已清除" } else { warn "pip 代理清除失败" }
     }
 }
 
@@ -819,7 +819,7 @@ function Configure-Pip($http_port) {
     }
     $url = "http://${PROXY_HOST}:${http_port}"
     & $pip config set global.proxy $url 2>$null
-    ok "pip 代理已设置: $url"
+    if ($LASTEXITCODE -eq 0) { ok "pip 代理已设置: $url" } else { warn "pip 代理设置失败" }
 }
 
 # ---- 验证与测试 ----

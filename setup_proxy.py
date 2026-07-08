@@ -533,7 +533,7 @@ def remove_proxy(rc_file: Path):
     # 清除 pip
     cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
     pip = (shutil.which("pip3") or shutil.which("pip") or
-           (shutil.which("pip3.exe") or shutil.which("pip.exe")) if IS_WINDOWS else None)
+           (shutil.which("pip3.exe") or shutil.which("pip.exe") if IS_WINDOWS else None))
     if pip:
         try:
             subprocess.run([pip, "config", "unset", "global.proxy"], capture_output=True, creationflags=cf)
@@ -575,7 +575,7 @@ def configure_git(http_port: int):
 def configure_pip(http_port: int):
     cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
     pip = (shutil.which("pip3") or shutil.which("pip") or
-           (shutil.which("pip3.exe") or shutil.which("pip.exe")) if IS_WINDOWS else None)
+           (shutil.which("pip3.exe") or shutil.which("pip.exe") if IS_WINDOWS else None))
     if not pip:
         warn("未找到 pip，跳过 pip 代理配置")
         return

@@ -8,11 +8,6 @@ BIN_DIR="${CLAUDE_CODE_BIN_DIR:-$HOME/.local/bin}"
 RC_FILE="${CLAUDE_CODE_RC_FILE:-}"
 SKIP_INSTALL="${CLAUDE_CODE_SKIP_INSTALL:-0}"
 
-if [[ "$BIN_DIR" == "$HOME/.local/bin" ]]; then
-    PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
-else
-    PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\""
-fi
 PATH_BLOCK_START="# >>> claude-code path >>>"
 PATH_BLOCK_END="# <<< claude-code path <<<"
 
@@ -56,6 +51,33 @@ select_rc_file() {
         */bash) printf '%s\n' "$HOME/.bash_profile" ;;
         *) printf '%s\n' "$HOME/.zshrc" ;;
     esac
+}
+
+path_line_for_rc() {
+    local rc=$1
+    local escaped_bin=${BIN_DIR//\\/\\\\}
+    escaped_bin=${escaped_bin//\"/\\\"}
+
+    if [[ "$rc" == *.fish || "$rc" == */config.fish ]]; then
+        if [[ "$BIN_DIR" == "$HOME/.local/bin" ]]; then
+            printf '%s\n' 'set -gx PATH "$HOME/.local/bin" $PATH'
+        else
+            printf 'set -gx PATH "%s" $PATH\n' "$escaped_bin"
+        fi
+        return
+    fi
+
+    if [[ "$BIN_DIR" == "$HOME/.local/bin" ]]; then
+        printf '%s\n' 'export PATH="$HOME/.local/bin:$PATH"'
+    else
+        printf 'export PATH="%s:$PATH"\n' "$escaped_bin"
+    fi
+}
+
+path_already_configured() {
+    local rc=$1
+    grep -Fq "$BIN_DIR" "$rc" && return 0
+    [[ "$BIN_DIR" == "$HOME/.local/bin" ]] && grep -Fq '$HOME/.local/bin' "$rc"
 }
 
 has_proxy_env() {
@@ -168,14 +190,14 @@ ensure_path() {
     mkdir -p "$(dirname "$rc")"
     touch "$rc"
 
-    if grep -Fq "$BIN_DIR" "$rc" || grep -Fq '$HOME/.local/bin' "$rc"; then
+    if path_already_configured "$rc"; then
         ok "PATH already includes $BIN_DIR in $rc"
         return
     fi
 
     {
         printf '\n%s\n' "$PATH_BLOCK_START"
-        printf '%s\n' "$PATH_LINE"
+        path_line_for_rc "$rc"
         printf '%s\n' "$PATH_BLOCK_END"
     } >> "$rc"
 

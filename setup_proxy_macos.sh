@@ -90,7 +90,7 @@ detect_clash_ports() {
         port=$(grep -E "^[[:space:]]*port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
         if [[ -n "$port" ]]; then
             socks_port=$(grep -E "^[[:space:]]*socks-port:[[:space:]]*[0-9]+" "$cfg" 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo "")
-            [[ -n "$socks_port" ]] || socks_port=$((port+1))
+            [[ -n "$socks_port" ]] || socks_port=$port
             info "检测到 Clash HTTP 端口: $port  ($cfg)"
             echo "$port $socks_port"
             return
@@ -191,7 +191,7 @@ auto_detect() {
     local candidates=(
         "v2rayN:$vp:$sp"
         "Clash/Mihomo:$cp:$csp"
-        "sing-box:$sbp:$((sbp+1))"
+        "sing-box:$sbp:$sbp"
     )
     local candidate name hp socks found
     for candidate in "${candidates[@]}"; do

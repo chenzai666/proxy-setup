@@ -89,7 +89,7 @@ function Detect-ClashPort {
             }
             if ($content -match '(?m)^\s*port\s*:\s*(\d+)') {
                 $port = [int]$Matches[1]
-                $socks_port = $port + 1
+                $socks_port = $port
                 if ($content -match '(?m)^\s*socks-port\s*:\s*(\d+)') {
                     $socks_port = [int]$Matches[1]
                 }
@@ -100,7 +100,7 @@ function Detect-ClashPort {
     }
 
     $port = Find-ListeningPortNear $DEFAULT_HTTP_PORT "Clash/Mihomo"
-    if ($port) { return @($port, $port + 1) }
+    if ($port) { return @($port, $port) }
     return @($DEFAULT_HTTP_PORT, $DEFAULT_SOCKS5_PORT)
 }
 
@@ -165,7 +165,7 @@ function Detect-SingBoxPort {
             if ($content -match '"listen_port"\s*:\s*(\d+)') {
                 $port = [int]$Matches[1]
                 info "检测到 sing-box 端口: $port  ($cfg)"
-                return @($port, $port + 1)
+                return @($port, $port)
             }
         } catch {}
     }
@@ -1558,7 +1558,7 @@ function Main {
             "2" {
                 $h = Read-Host "  输入 HTTP 代理端口 [默认 $DEFAULT_HTTP_PORT]"
                 if ([string]::IsNullOrWhiteSpace($h)) { $hp = $DEFAULT_HTTP_PORT } else { $hp = [int]$h }
-                $ds = $hp + 1
+                $ds = $hp
                 $s = Read-Host "  输入 SOCKS5 代理端口 [默认 $ds]"
                 if ([string]::IsNullOrWhiteSpace($s)) { $sp = $ds } else { $sp = [int]$s }
 

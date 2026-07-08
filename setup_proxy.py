@@ -110,14 +110,14 @@ def detect_clash_ports() -> tuple:
                 if m:
                     port = int(m.group(1))
                     socks_match = re.search(r"^socks-port:\s*(\d+)", content, re.MULTILINE)
-                    socks_port = int(socks_match.group(1)) if socks_match else port + 1
+                    socks_port = int(socks_match.group(1)) if socks_match else port
                     info(f"检测到 Clash HTTP 端口: {port}")
                     return port, socks_port
             except Exception:
                 pass
     port = find_listening_port_near(DEFAULT_HTTP_PORT, "Clash/Mihomo")
     if port:
-        return port, port + 1
+        return port, port
     return DEFAULT_HTTP_PORT, DEFAULT_SOCKS5_PORT
 
 
@@ -226,7 +226,7 @@ def detect_singbox_port() -> tuple:
                         proto = ib.get("protocol", "")
                         if port:
                             if proto in ("http", "mixed") or "http" in str(ib.get("tag","")):
-                                return int(port), int(port) + 1
+                                return int(port), int(port)
                             elif proto in ("socks",):
                                 return int(port) - 1, int(port)
                 except json.JSONDecodeError:
@@ -236,7 +236,7 @@ def detect_singbox_port() -> tuple:
                 if m:
                     port = int(m.group(1))
                     info(f"检测到 sing-box 端口: {port}")
-                    return port, port + 1
+                    return port, port
             except Exception:
                 pass
     return DEFAULT_HTTP_PORT, DEFAULT_SOCKS5_PORT
@@ -1467,11 +1467,10 @@ def main():
         elif choice == "2":
             try:
                 default_http = DEFAULT_HTTP_PORT
-                default_socks = DEFAULT_SOCKS5_PORT
                 h = input(f"  输入 HTTP 代理端口 [默认 {default_http}]: ").strip()
                 http_port = int(h) if h else default_http
-                s = input(f"  输入 SOCKS5 代理端口 [默认 {http_port+1}]: ").strip()
-                socks5_port = int(s) if s else http_port + 1
+                s = input(f"  输入 SOCKS5 代理端口 [默认 {http_port}]: ").strip()
+                socks5_port = int(s) if s else http_port
             except ValueError:
                 err("端口必须是数字")
                 continue

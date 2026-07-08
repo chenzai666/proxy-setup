@@ -2,33 +2,45 @@
 
 echo.
 echo ==========
-echo  Python 3 Installer + Proxy Setup Launcher
+echo  Proxy Setup Launcher
 echo ==========
 echo.
 
-set "FOUND="
+set "FOUND_PS="
+set "FOUND_PY="
 
-REM ---- Find setup_proxy.py ----
+REM ---- Find setup_proxy.ps1 / setup_proxy.py ----
 
 REM 1) Same folder as this bat
-if exist "%~dp0setup_proxy.py" set "FOUND=%~dp0setup_proxy.py" & goto :found_ok
+if exist "%~dp0setup_proxy.ps1" set "FOUND_PS=%~dp0setup_proxy.ps1"
+if exist "%~dp0setup_proxy.py" set "FOUND_PY=%~dp0setup_proxy.py"
 
 REM 2) Parent folder
-if exist "%~dp0..\setup_proxy.py" set "FOUND=%~dp0..\setup_proxy.py" & goto :found_ok
+if not defined FOUND_PS if exist "%~dp0..\setup_proxy.ps1" set "FOUND_PS=%~dp0..\setup_proxy.ps1"
+if not defined FOUND_PY if exist "%~dp0..\setup_proxy.py" set "FOUND_PY=%~dp0..\setup_proxy.py"
 
 REM 3) Downloads
-if exist "%USERPROFILE%\Downloads\setup_proxy.py" set "FOUND=%USERPROFILE%\Downloads\setup_proxy.py" & goto :found_ok
-if exist "%USERPROFILE%\Downloads\proxy-setup\setup_proxy.py" set "FOUND=%USERPROFILE%\Downloads\proxy-setup\setup_proxy.py" & goto :found_ok
-if exist "%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.py" set "FOUND=%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.py" & goto :found_ok
-if exist "%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.py" set "FOUND=%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.py" & goto :found_ok
+if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\setup_proxy.ps1"
+if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\setup_proxy.py"
+if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\proxy-setup\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\proxy-setup\setup_proxy.ps1"
+if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\proxy-setup\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\proxy-setup\setup_proxy.py"
+if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.ps1"
+if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.py"
+if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.ps1"
+if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.py"
 
 REM 4) Desktop
-if exist "%USERPROFILE%\Desktop\proxy-setup\setup_proxy.py" set "FOUND=%USERPROFILE%\Desktop\proxy-setup\setup_proxy.py" & goto :found_ok
-if exist "%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.py" set "FOUND=%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.py" & goto :found_ok
+if not defined FOUND_PS if exist "%USERPROFILE%\Desktop\proxy-setup\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Desktop\proxy-setup\setup_proxy.ps1"
+if not defined FOUND_PY if exist "%USERPROFILE%\Desktop\proxy-setup\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Desktop\proxy-setup\setup_proxy.py"
+if not defined FOUND_PS if exist "%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.ps1"
+if not defined FOUND_PY if exist "%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.py"
+
+if defined FOUND_PS goto :found_ps
+if defined FOUND_PY goto :found_py
 
 REM Not found
 echo.
-echo   setup_proxy.py not found.
+echo   setup_proxy.ps1 / setup_proxy.py not found.
 echo.
 echo   Contents of this folder:
 echo   ---------------------------
@@ -44,14 +56,22 @@ set /p "FOLDER=  Path: "
 if not defined FOLDER goto :done
 if "%FOLDER:~-1%"=="\" set "FOLDER=%FOLDER:~0,-1%"
 
-if exist "%FOLDER%\setup_proxy.py" set "FOUND=%FOLDER%\setup_proxy.py" & goto :found_ok
+if exist "%FOLDER%\setup_proxy.ps1" set "FOUND_PS=%FOLDER%\setup_proxy.ps1" & goto :found_ps
+if exist "%FOLDER%\setup_proxy.py" set "FOUND_PY=%FOLDER%\setup_proxy.py" & goto :found_py
 
 echo   Still not found.
 goto :done
 
-:found_ok
+:found_ps
 echo.
-echo   [OK] Found: %FOUND%
+echo   [OK] Found PowerShell script: %FOUND_PS%
+echo.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%FOUND_PS%"
+goto :done
+
+:found_py
+echo.
+echo   [OK] Found Python script: %FOUND_PY%
 echo.
 
 REM ---- Check / Install Python ----
@@ -83,12 +103,12 @@ goto :done
 
 :py_ok
 python --version
-python "%FOUND%"
+python "%FOUND_PY%"
 goto :done
 
 :py3_ok
 python3 --version
-python3 "%FOUND%"
+python3 "%FOUND_PY%"
 
 :done
 echo.

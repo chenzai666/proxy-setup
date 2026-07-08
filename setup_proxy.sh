@@ -21,7 +21,6 @@ run_platform_script() {
         else
             bases+=(
                 "https://raw.githubusercontent.com/chenzai666/proxy-setup/master"
-                "https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master"
             )
         fi
 

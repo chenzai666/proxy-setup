@@ -274,9 +274,12 @@ def auto_detect_ports() -> tuple:
             info(f"自动检测: {name} 端口 {hp}/{sp} 正在监听")
             return hp, sp
 
-    # 都未监听，返回项目默认端口，避免历史 v2rayN 默认值覆盖当前 7897 默认值。
-    info("未检测到监听端口，使用默认值")
-    return DEFAULT_HTTP_PORT, DEFAULT_SOCKS5_PORT
+    # 都未监听时仍按自动检测优先级返回第一个候选。
+    # v2rayN 是首选客户端，因此默认 fallback 为 10808/10808；
+    # Clash/Mihomo 自身缺配置时仍使用 7897/7897 作为它的候选端口。
+    name, hp, sp = candidates[0]
+    info(f"未检测到监听端口，使用首选默认值: {name} {hp}/{sp}")
+    return hp, sp
 
 
 def check_port_listening(port: int) -> bool:

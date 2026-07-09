@@ -205,8 +205,9 @@ auto_detect() {
         fi
     done
 
-    warn "未检测到监听端口，使用默认值"
-    echo "$DEFAULT_HTTP_PORT $DEFAULT_SOCKS5_PORT"
+    IFS=: read -r name hp socks <<< "${candidates[0]}"
+    warn "未检测到监听端口，使用首选默认值: $name $hp/$socks"
+    echo "$hp $socks"
 }
 
 # ─── 写入 ~/.zshrc ────────────────────────────────────────────

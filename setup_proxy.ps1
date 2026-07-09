@@ -194,8 +194,11 @@ function Auto-DetectPorts {
             return @([int]$found, [int]($found + $delta))
         }
     }
-    info "未检测到监听端口，使用默认值"
-    return @($DEFAULT_HTTP_PORT, $DEFAULT_SOCKS5_PORT)
+    $first = $candidates[0]
+    $hp = [int]$first.Ports[0]
+    $sp = [int]$first.Ports[1]
+    info "未检测到监听端口，使用首选默认值: $($first.Name) $hp/$sp"
+    return @($hp, $sp)
 }
 
 # ---- Shell Profile 配置 ----

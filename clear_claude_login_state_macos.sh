@@ -18,6 +18,10 @@ include_claude_cli="${INCLUDE_CLAUDE_CLI:-0}"
 include_browser_site_data="${INCLUDE_BROWSER_SITE_DATA:-0}"
 
 home_dir="${HOME:?HOME is not set}"
+home_dir="$(cd "$home_dir" 2>/dev/null && pwd -P)" || {
+  printf '%s\n' "HOME does not exist: $HOME" >&2
+  exit 1
+}
 
 say() {
   printf '%s\n' "$*"
@@ -68,28 +72,62 @@ select_target() {
 
 remove_path() {
   local path="$1"
+  local full_path
 
-  case "$path" in
+  full_path="$(normalize_path "$path")" || {
+    say "Skipped unresolved path: $path"
+    return
+  }
+
+  case "$full_path" in
     "$home_dir"/*) ;;
     *)
-      say "Skipped path outside HOME: $path"
+      say "Skipped path outside HOME: $full_path"
       return
       ;;
   esac
 
-  if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+  if [ ! -e "$full_path" ] && [ ! -L "$full_path" ]; then
     return
   fi
 
   if [ "$dry_run" = "1" ]; then
-    say "Would remove: $path"
+    say "Would remove: $full_path"
   else
-    if rm -rf "$path" 2>/dev/null; then
-      say "Removed: $path"
+    if rm -rf "$full_path" 2>/dev/null; then
+      say "Removed: $full_path"
     else
-      say "Warning: could not remove $path (check permissions)"
+      say "Warning: could not remove $full_path (check permissions)"
     fi
   fi
+}
+
+normalize_path() {
+  local path="$1"
+  local dir base
+
+  if [ -z "$path" ]; then
+    return 1
+  fi
+
+  case "$path" in
+    /*) ;;
+    *) path="$PWD/$path" ;;
+  esac
+
+  dir=$(dirname "$path")
+  base=$(basename "$path")
+
+  while [ ! -d "$dir" ] && [ "$dir" != "/" ]; do
+    base="$(basename "$dir")/$base"
+    dir=$(dirname "$dir")
+  done
+
+  if [ ! -d "$dir" ]; then
+    return 1
+  fi
+
+  (cd "$dir" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$base")
 }
 
 if [ "$include_claude_cli" = "1" ]; then

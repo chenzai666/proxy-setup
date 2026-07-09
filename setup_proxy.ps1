@@ -105,8 +105,6 @@ function Detect-ClashPort {
 }
 
 function Detect-V2rayNPort {
-    $http_port = 10808; $socks_port = 10808
-
     $dirs = @(
         "$env:APPDATA\v2rayN",
         "$env:USERPROFILE\v2rayN",
@@ -117,26 +115,34 @@ function Detect-V2rayNPort {
         $gui = Join-Path $base "guiNConfig.json"
         if (Test-Path $gui) {
             try {
+                $http_port = $null; $socks_port = $null
                 $data = Get-Content $gui -Raw -Encoding UTF8 | ConvertFrom-Json
-                if ($data.httpPort) { $http_port = [int]$data.httpPort }
-                if ($data.socksPort) { $socks_port = [int]$data.socksPort }
-                info "检测到 v2rayN 端口: HTTP=$http_port, SOCKS=$socks_port  ($gui)"
-                return @($http_port, $socks_port)
+                if ($null -ne $data.httpPort -and "$($data.httpPort)" -ne "") { $http_port = [int]$data.httpPort }
+                if ($null -ne $data.socksPort -and "$($data.socksPort)" -ne "") { $socks_port = [int]$data.socksPort }
+                if ($http_port) {
+                    if (-not $socks_port) { $socks_port = $http_port }
+                    info "检测到 v2rayN 端口: HTTP=$http_port, SOCKS=$socks_port  ($gui)"
+                    return @($http_port, $socks_port)
+                }
             } catch {}
         }
 
         $core = Join-Path $base "config.json"
         if (Test-Path $core) {
             try {
+                $http_port = $null; $socks_port = $null
                 $data = Get-Content $core -Raw -Encoding UTF8 | ConvertFrom-Json
                 foreach ($ib in $data.inbounds) {
                     $p  = $ib.port; if (-not $p) { $p = $ib.listenPort }
                     if (-not $p) { continue }
                     $pr = $ib.protocol
-                    if ($pr -in @("http","mixed")) { $http_port = [int]$p }
+                    if ($pr -in @("http","mixed")) { $http_port = [int]$p; if ($pr -eq "mixed") { $socks_port = [int]$p } }
                     if ($pr -eq "socks") { $socks_port = [int]$p }
                 }
-                if ($http_port) { return @($http_port, $socks_port) }
+                if ($http_port) {
+                    if (-not $socks_port) { $socks_port = $http_port }
+                    return @($http_port, $socks_port)
+                }
             } catch {}
         }
     }

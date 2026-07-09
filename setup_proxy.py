@@ -153,10 +153,12 @@ def detect_v2rayn_port() -> tuple:
         if gui_cfg.exists():
             try:
                 data = json.loads(gui_cfg.read_text(encoding="utf-8"))
-                http_port  = int(data.get("httpPort", 10808))
-                socks_port = int(data.get("socksPort", http_port))
-                info(f"检测到 v2rayN 端口: HTTP={http_port}, SOCKS={socks_port}  ({gui_cfg})")
-                return http_port, socks_port
+                raw_http = data.get("httpPort")
+                if raw_http not in (None, ""):
+                    http_port = int(raw_http)
+                    socks_port = int(data.get("socksPort") or http_port)
+                    info(f"检测到 v2rayN 端口: HTTP={http_port}, SOCKS={socks_port}  ({gui_cfg})")
+                    return http_port, socks_port
             except Exception:
                 pass
 
@@ -272,9 +274,9 @@ def auto_detect_ports() -> tuple:
             info(f"自动检测: {name} 端口 {hp}/{sp} 正在监听")
             return hp, sp
 
-    # 都未监听，返回第一个候选（按平台优先级）
-    info(f"未检测到监听端口，使用默认/首选项: {candidates[0][0]}")
-    return candidates[0][1], candidates[0][2]
+    # 都未监听，返回项目默认端口，避免历史 v2rayN 默认值覆盖当前 7897 默认值。
+    info("未检测到监听端口，使用默认值")
+    return DEFAULT_HTTP_PORT, DEFAULT_SOCKS5_PORT
 
 
 def check_port_listening(port: int) -> bool:

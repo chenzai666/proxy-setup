@@ -109,7 +109,6 @@ detect_clash_port() {
 }
 
 detect_v2rayn_port() {
-    local http_port=10808 socks_port=10808
     local configs=(
         "$HOME/.config/v2rayN/guiNConfig.json"
         "$HOME/Library/Application Support/v2rayN/guiNConfig.json"
@@ -121,11 +120,12 @@ detect_v2rayn_port() {
         local raw_http raw_socks
         raw_http=$(grep -o '"httpPort"[[:space:]]*:[[:space:]]*[0-9]*' "$cfg" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
         raw_socks=$(grep -o '"socksPort"[[:space:]]*:[[:space:]]*[0-9]*' "$cfg" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
-        [[ -n "$raw_http"  ]] && http_port=$raw_http
-        [[ -n "$raw_socks" ]] && socks_port=$raw_socks || socks_port=$http_port
-        info "检测到 v2rayN 端口: HTTP=$http_port, SOCKS=$socks_port  ($cfg)"
-        echo "$http_port $socks_port"
-        return
+        if [[ -n "$raw_http" ]]; then
+            [[ -n "$raw_socks" ]] || raw_socks=$raw_http
+            info "检测到 v2rayN 端口: HTTP=$raw_http, SOCKS=$raw_socks  ($cfg)"
+            echo "$raw_http $raw_socks"
+            return
+        fi
     done
     # 没有配置文件，嗅探端口（混合端口模式下 HTTP+SOCKS 共用一个端口）
     for base_port in 10808 1080; do

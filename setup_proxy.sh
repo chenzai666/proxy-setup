@@ -9,12 +9,35 @@ _PROXY_SOURCED=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
 
+is_truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|y|Y) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_temp_script_dir() {
+    case "$SCRIPT_DIR" in
+        /tmp|/tmp/*|/private/tmp|/private/tmp/*|/var/folders/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+should_refresh_platform_script() {
+    local local_script=$1
+    [[ ! -f "$local_script" ]] && return 0
+    [[ -n "${PROXY_SETUP_REMOTE_BASE_URL:-}" ]] && return 0
+    is_truthy "${PROXY_SETUP_FORCE_DOWNLOAD:-}" && return 0
+    is_temp_script_dir && return 0
+    return 1
+}
+
 run_platform_script() {
     local script_name=$1
     shift || true
     local local_script="$SCRIPT_DIR/$script_name"
 
-    if [[ ! -f "$local_script" ]]; then
+    if should_refresh_platform_script "$local_script"; then
         local bases=()
         if [[ -n "${PROXY_SETUP_REMOTE_BASE_URL:-}" ]]; then
             bases+=("${PROXY_SETUP_REMOTE_BASE_URL%/}")
@@ -30,12 +53,16 @@ run_platform_script() {
             exit 1
         fi
 
-        local base url tmp
-        tmp="${local_script}.tmp.$$"
+        local base url tmp downloaded=0
+        tmp="$(mktemp "${TMPDIR:-/tmp}/proxy-setup-${script_name}.XXXXXX")" || {
+            echo "Failed to create temporary file." >&2
+            exit 1
+        }
         for base in "${bases[@]}"; do
             url="$base/$script_name"
             echo "Downloading platform script: $url" >&2
             if curl -fsSL "$url" -o "$tmp"; then
+                downloaded=1
                 mv "$tmp" "$local_script"
                 chmod +x "$local_script" 2>/dev/null || true
                 break
@@ -43,11 +70,17 @@ run_platform_script() {
         done
         rm -f "$tmp"
 
-        if [[ ! -f "$local_script" ]]; then
-            echo "Script not found: $local_script" >&2
-            echo "Please run: git clone https://github.com/chenzai666/proxy-setup.git" >&2
+        if [[ "$downloaded" != "1" ]]; then
+            echo "Failed to download $script_name." >&2
+            echo "Please retry later or run: git clone https://github.com/chenzai666/proxy-setup.git" >&2
             exit 1
         fi
+    fi
+
+    if [[ ! -f "$local_script" ]]; then
+        echo "Script not found: $local_script" >&2
+        echo "Please run: git clone https://github.com/chenzai666/proxy-setup.git" >&2
+        exit 1
     fi
 
     if [[ "$_PROXY_SOURCED" == "1" ]]; then

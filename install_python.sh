@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Python 3 安装脚本（macOS）
-#  proxy-setup 配套，确保 setup_proxy.py 可用
+#  proxy-setup macOS 启动器
+#  优先运行 Bash 版，只有 Python 版存在时才检测/安装 Python
 # ============================================================
 set -euo pipefail
 
@@ -107,6 +107,24 @@ install_mac() {
 
 # ---- 检测并运行 setup_proxy ----
 
+run_python_setup() {
+    local found_py=$1
+
+    if ! detect_python; then
+        warn "未检测到 Python 3，开始安装..."
+        install_mac || return 1
+    fi
+
+    if command -v python3 &>/dev/null; then
+        python3 "$found_py"
+    elif command -v python &>/dev/null; then
+        python "$found_py"
+    else
+        err "Python 安装后仍不可用，请重新打开终端后再试"
+        return 1
+    fi
+}
+
 find_and_run_setup() {
     echo ""
     info "检测同目录下的代理配置脚本..."
@@ -116,6 +134,7 @@ find_and_run_setup() {
 
     local found_py=""
     local found_sh=""
+    local found_macos_sh=""
     local search_dirs=(
         "$script_dir"
         "$script_dir/.."
@@ -126,32 +145,43 @@ find_and_run_setup() {
     )
 
     for dir in "${search_dirs[@]}"; do
-        if [[ -z "$found_py" && -f "$dir/setup_proxy.py" ]]; then
-            found_py="$dir/setup_proxy.py"
-        fi
         if [[ -z "$found_sh" && -f "$dir/setup_proxy.sh" ]]; then
             found_sh="$dir/setup_proxy.sh"
         fi
+        if [[ -z "$found_macos_sh" && -f "$dir/setup_proxy_macos.sh" ]]; then
+            found_macos_sh="$dir/setup_proxy_macos.sh"
+        fi
+        if [[ -z "$found_py" && -f "$dir/setup_proxy.py" ]]; then
+            found_py="$dir/setup_proxy.py"
+        fi
     done
 
-    if [[ -n "$found_py" ]]; then
-        ok "找到 Python 版: $found_py"
-        printf '  是否运行？[Y/n] '
-        read -r answer
-        if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
-            python3 "$found_py"
-            return $?
-        fi
-    elif [[ -n "$found_sh" ]]; then
-        ok "找到 Shell 版: $found_sh  (无需 Python)"
+    if [[ -n "$found_sh" ]]; then
+        ok "找到 Shell 分发入口: $found_sh"
         printf '  是否运行？[Y/n] '
         read -r answer
         if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
             bash "$found_sh"
             return $?
         fi
+    elif [[ -n "$found_macos_sh" ]]; then
+        ok "找到 macOS Shell 版: $found_macos_sh"
+        printf '  是否运行？[Y/n] '
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+            bash "$found_macos_sh"
+            return $?
+        fi
+    elif [[ -n "$found_py" ]]; then
+        ok "找到 Python 版: $found_py"
+        printf '  是否运行？[Y/n] '
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+            run_python_setup "$found_py"
+            return $?
+        fi
     else
-        warn "未找到 setup_proxy.py / setup_proxy.sh"
+        warn "未找到 setup_proxy.sh / setup_proxy_macos.sh / setup_proxy.py"
         info "你可以手动下载:"
         info "  git clone https://github.com/chenzai666/proxy-setup.git"
         info "  cd proxy-setup && bash setup_proxy.sh"
@@ -162,16 +192,7 @@ find_and_run_setup() {
 
 main() {
     echo ""
-    printf '\033[1m=== Python 3 安装脚本 ===\033[0m\n'
-    echo ""
-
-    # 已安装 → 检测 setup_proxy.py
-    if detect_python; then
-        find_and_run_setup
-        return 0
-    fi
-
-    warn "未检测到 Python 3，开始安装..."
+    printf '\033[1m=== proxy-setup macOS 启动器 ===\033[0m\n'
     echo ""
 
     local os_type
@@ -179,7 +200,6 @@ main() {
 
     case "$os_type" in
         Darwin)
-            install_mac || return 1
             find_and_run_setup
             ;;
         *)

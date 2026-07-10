@@ -303,13 +303,16 @@ claude_geo_launcher_path() {
 
 install_claude_geo_launcher() {
     local hp=$1 sp=$2
-    local dir launcher rc body tmp in_block
+    local dir launcher rc body tmp in_block line
     dir="$(claude_geo_dir)"
     launcher="$(claude_geo_launcher_path)"
     rc="$(get_rc_file)"
     mkdir -p "$dir"
 
-    body=$(cat <<'CLAUDE_GEO_SCRIPT'
+    body=""
+    while IFS= read -r line; do
+        body="${body}${line}"$'\n'
+    done <<'CLAUDE_GEO_SCRIPT'
 #!/usr/bin/env bash
 set -u
 PROXY_HOST="127.0.0.1"
@@ -445,7 +448,6 @@ if [ "$PRINT_ONLY" = "1" ]; then
 fi
 exec "$CLAUDE_COMMAND" "${CLAUDE_ARGS[@]}"
 CLAUDE_GEO_SCRIPT
-)
     body="${body//__HTTP_PORT__/$hp}"
     body="${body//__SOCKS_PORT__/$sp}"
     printf '%s\n' "$body" > "$launcher"

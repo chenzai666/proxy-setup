@@ -362,13 +362,13 @@ bash clear_claude_login_state_macos.sh
 远程一行命令：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
+t="$(mktemp -t clear_claude_login_state_macos.XXXXXX)" && trap 'rm -f "$t"' EXIT && curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/clear_claude_login_state_macos.sh -o "$t" && bash "$t"
 ```
 
 远程一行命令加速版（jsDelivr CDN）：
 
 ```bash
-curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh -o /tmp/clear_claude_login_state_macos.sh && bash /tmp/clear_claude_login_state_macos.sh; rm -f /tmp/clear_claude_login_state_macos.sh
+t="$(mktemp -t clear_claude_login_state_macos.XXXXXX)" && trap 'rm -f "$t"' EXIT && curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/clear_claude_login_state_macos.sh -o "$t" && bash "$t"
 ```
 
 预演，不真正删除：

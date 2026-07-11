@@ -16,6 +16,39 @@ ok() { printf '  \033[0;32m[OK] %s\033[0m\n' "$1" >&2; }
 warn() { printf '  \033[1;33m[WARN] %s\033[0m\n' "$1" >&2; }
 err() { printf '  \033[0;31m[ERR] %s\033[0m\n' "$1" >&2; }
 
+get_progress_interval_seconds() {
+    local raw=${CLAUDE_CODE_PROGRESS_SECONDS:-} value
+
+    case "$raw" in
+        '') printf '60\n' ;;
+        *[!0-9]*) printf '60\n' ;;
+        *)
+            value=$((10#$raw))
+            if ((value < 2)); then
+                printf '2\n'
+            else
+                printf '%s\n' "$value"
+            fi
+            ;;
+    esac
+}
+
+format_duration() {
+    local seconds=$1 hours minutes
+
+    hours=$((seconds / 3600))
+    minutes=$(((seconds % 3600) / 60))
+    seconds=$((seconds % 60))
+
+    if ((hours > 0)); then
+        printf '%sh %sm %ss\n' "$hours" "$minutes" "$seconds"
+    elif ((minutes > 0)); then
+        printf '%sm %ss\n' "$minutes" "$seconds"
+    else
+        printf '%ss\n' "$seconds"
+    fi
+}
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -28,6 +61,7 @@ Environment variables:
   CLAUDE_CODE_BIN_DIR=PATH       Directory for the claude symlink.
                                  Default: ~/.local/bin
   CLAUDE_CODE_INSTALL_URL=URL    Override the official installer URL.
+  CLAUDE_CODE_PROGRESS_SECONDS=N Progress heartbeat interval. Default: 60 (min: 2).
 EOF
 }
 
@@ -104,7 +138,7 @@ run_installer() {
         exit 1
     }
 
-    local tmp
+    local tmp interval started pid elapsed next_update exit_code
     tmp="$(mktemp "/tmp/claude-code-install.XXXXXX.sh")"
     trap 'rm -f "$tmp"' EXIT
 
@@ -112,7 +146,34 @@ run_installer() {
     curl -fsSL "$INSTALL_URL" -o "$tmp"
 
     info "Running Claude Code installer..."
-    bash "$tmp"
+    interval="$(get_progress_interval_seconds)"
+    started=$SECONDS
+    next_update=$interval
+    bash "$tmp" &
+    pid=$!
+    info "Claude Code installer started (PID $pid). Progress will update every ${interval}s."
+
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        elapsed=$((SECONDS - started))
+        if ((elapsed >= next_update)) && kill -0 "$pid" 2>/dev/null; then
+            info "Claude Code installer still running... elapsed $(format_duration "$elapsed")"
+            next_update=$((next_update + interval))
+        fi
+    done
+
+    if wait "$pid"; then
+        ok "Claude Code installer finished in $(format_duration "$((SECONDS - started))")"
+    else
+        exit_code=$?
+        err "Claude Code installer exited with code $exit_code after $(format_duration "$((SECONDS - started))")"
+        rm -f "$tmp"
+        trap - EXIT
+        return "$exit_code"
+    fi
+
+    rm -f "$tmp"
+    trap - EXIT
 }
 
 valid_claude() {

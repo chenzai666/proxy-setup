@@ -364,15 +364,22 @@ function Ensure-UserPath {
     Ok "Added Claude Code directory to user PATH: $dir"
 }
 
-function Show-Version {
+function Get-ClaudeVersion {
     param([string]$CommandPath)
 
+    $output = @()
     if ($CommandPath.EndsWith('.ps1', [System.StringComparison]::OrdinalIgnoreCase)) {
         $ps = (Get-Command powershell.exe -ErrorAction Stop).Source
-        & $ps -NoProfile -ExecutionPolicy Bypass -File $CommandPath --version
+        $output = & $ps -NoProfile -ExecutionPolicy Bypass -File $CommandPath --version
     } else {
-        & $CommandPath --version
+        $output = & $CommandPath --version
     }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read Claude Code version (exit code $LASTEXITCODE)."
+    }
+
+    return (($output | Out-String).Trim())
 }
 
 function Main {
@@ -393,10 +400,10 @@ function Main {
     Ensure-UserPath $claude
 
     Ok "claude command: $claude"
-    Show-Version $claude
+    $claudeVersion = Get-ClaudeVersion $claude
 
     Write-Host ''
-    Ok 'Claude Code is ready.'
+    Ok "Claude Code is ready. Version: $claudeVersion"
     Info 'If a new terminal cannot find claude, close and reopen PowerShell/CMD.'
 }
 

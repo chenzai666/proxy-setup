@@ -218,15 +218,20 @@ verify_install() {
     export PATH="$BIN_DIR:$PATH"
     hash -r 2>/dev/null || true
 
-    local resolved
+    local resolved version
     resolved="$(command -v claude 2>/dev/null || true)"
     if [[ -z "$resolved" ]]; then
         err "claude is still not on PATH."
         exit 1
     fi
 
+    if ! version="$(claude --version 2>&1)"; then
+        err "Unable to read Claude Code version: $version"
+        exit 1
+    fi
+
     ok "claude command: $resolved"
-    claude --version
+    printf '%s\n' "$version"
 }
 
 main() {
@@ -243,10 +248,11 @@ main() {
     claude_bin="$(find_claude_binary)"
     ensure_symlink "$claude_bin"
     ensure_path
-    verify_install
+    local claude_version
+    claude_version="$(verify_install)"
 
     printf '\n'
-    ok "Claude Code is ready."
+    ok "Claude Code is ready. Version: $claude_version"
     info "For a new terminal, PATH will load automatically."
     info "For this terminal, run: source \"$(select_rc_file)\""
 }

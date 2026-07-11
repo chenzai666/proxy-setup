@@ -49,6 +49,23 @@ format_duration() {
     fi
 }
 
+render_progress_status() {
+    local elapsed=$1 message
+    message="Claude Code installer is still running... elapsed $(format_duration "$elapsed")"
+
+    if [[ -t 2 ]]; then
+        printf '\r\033[K  %s' "$message" >&2
+    else
+        info "$message"
+    fi
+}
+
+clear_progress_status() {
+    if [[ -t 2 ]]; then
+        printf '\r\033[K' >&2
+    fi
+}
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -151,17 +168,18 @@ run_installer() {
     next_update=$interval
     bash "$tmp" &
     pid=$!
-    info "Claude Code installer started (PID $pid). Progress will update every ${interval}s."
+    info "Claude Code installer started (PID $pid). Status will update in place every ${interval}s."
 
     while kill -0 "$pid" 2>/dev/null; do
         sleep 1
         elapsed=$((SECONDS - started))
         if ((elapsed >= next_update)) && kill -0 "$pid" 2>/dev/null; then
-            info "Claude Code installer still running... elapsed $(format_duration "$elapsed")"
+            render_progress_status "$elapsed"
             next_update=$((next_update + interval))
         fi
     done
 
+    clear_progress_status
     if wait "$pid"; then
         ok "Claude Code installer finished in $(format_duration "$((SECONDS - started))")"
     else

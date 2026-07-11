@@ -298,9 +298,9 @@ t="$(mktemp -t install_claude_code_macos.XXXXXX)" && trap 'rm -f "$t"' EXIT && c
 | `CLAUDE_CODE_RC_FILE=PATH` | 指定写入的 shell 配置文件 | zsh→`~/.zshrc`，bash→`~/.bash_profile` |
 | `CLAUDE_CODE_BIN_DIR=PATH` | claude 符号链接目录 | `~/.local/bin` |
 | `CLAUDE_CODE_INSTALL_URL=URL` | 覆盖官方安装脚本地址 | `https://claude.ai/install.sh` |
-| `CLAUDE_CODE_PROGRESS_SECONDS=60` | 安装器运行时的进度提示间隔，最小 2 秒 | `60` |
+| `CLAUDE_CODE_PROGRESS_SECONDS=60` | 安装器状态刷新间隔，最小 2 秒 | `60` |
 
-macOS 安装器运行期间会定时输出 `still running... elapsed ...`，表示官方安装器仍在执行。
+macOS 交互终端会在同一行更新 `still running... elapsed ...`；重定向输出时才会逐行记录。官方安装器未提供可读取的百分比进度。
 
 ### Linux
 

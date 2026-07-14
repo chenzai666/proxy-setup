@@ -9,7 +9,7 @@ $DEFAULT_HTTP_PORT   = 7897
 $DEFAULT_SOCKS5_PORT = 7897
 $PORT_SCAN_RADIUS = 10
 $PROXY_HOST = "127.0.0.1"
-$NO_PROXY = "localhost,127.0.0.1,::1"
+$DEFAULT_NO_PROXY = "localhost,127.0.0.1,::1"
 $ANTHROPIC_BASE_URL = ""
 
 $CF_TRACE_TARGETS = @(
@@ -30,6 +30,39 @@ function ok($msg)    { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function warn($msg)  { Write-Host "  [WARN] $msg" -ForegroundColor Yellow }
 function err($msg)   { Write-Host "  [ERR] $msg" -ForegroundColor Red }
 function bold($msg)  { Write-Host $msg }
+
+function Get-MergedNoProxy {
+    $values = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    $sources = @(
+        [Environment]::GetEnvironmentVariable("NO_PROXY", "Process"),
+        [Environment]::GetEnvironmentVariable("no_proxy", "Process"),
+        $DEFAULT_NO_PROXY
+    )
+    foreach ($source in $sources) {
+        if ([string]::IsNullOrWhiteSpace($source)) { continue }
+        foreach ($item in ($source -split ",")) {
+            $value = $item.Trim()
+            if (-not $value) { continue }
+            $key = $value.ToLowerInvariant()
+            if (-not $seen.ContainsKey($key)) {
+                $seen[$key] = $true
+                $values.Add($value)
+            }
+        }
+    }
+    return ($values -join ",")
+}
+
+function ConvertTo-ProxyPort([string]$Value, [int]$DefaultValue, [string]$Label) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $DefaultValue }
+    $port = 0
+    if (-not [int]::TryParse($Value, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+        warn "$Label 端口必须是 1-65535 之间的整数"
+        return $null
+    }
+    return $port
+}
 
 # PowerShell 5.1 兼容: 控制台 UTF-8 输出
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -167,23 +200,43 @@ function Detect-SingBoxPort {
     foreach ($cfg in $configs) {
         if (-not (Test-Path $cfg)) { continue }
         try {
-            $content = Get-Content $cfg -Raw -Encoding UTF8
-            if ($content -match '"listen_port"\s*:\s*(\d+)') {
-                $port = [int]$Matches[1]
-                info "检测到 sing-box 端口: $port  ($cfg)"
-                return @($port, $port)
+            $data = Get-Content $cfg -Raw -Encoding UTF8 | ConvertFrom-Json
+            $httpPort = $null; $socksPort = $null
+            foreach ($inbound in @($data.inbounds)) {
+                $port = if ($null -ne $inbound.listen_port) { $inbound.listen_port } else { $inbound.port }
+                if ($null -eq $port -or "$port" -eq "") { continue }
+                $type = if ($inbound.type) { [string]$inbound.type } else { [string]$inbound.protocol }
+                switch ($type.ToLowerInvariant()) {
+                    "mixed" {
+                        $port = [int]$port
+                        info "检测到 sing-box 混合端口: $port  ($cfg)"
+                        return @($port, $port)
+                    }
+                    "http" { $httpPort = [int]$port }
+                    "socks" { $socksPort = [int]$port }
+                }
+            }
+            if ($httpPort -and $socksPort) {
+                info "检测到 sing-box 端口: HTTP=$httpPort, SOCKS=$socksPort  ($cfg)"
+                return @($httpPort, $socksPort)
+            }
+            if ($httpPort -or $socksPort) {
+                warn "sing-box 配置未同时提供 HTTP 和 SOCKS 入站，跳过自动配置: $cfg"
             }
         } catch {}
     }
-    return @($DEFAULT_HTTP_PORT, $DEFAULT_SOCKS5_PORT)
+    return $null
 }
 
 function Auto-DetectPorts {
     $candidates = @(
         @{Name="v2rayN";   Ports=(Detect-V2rayNPort)},
-        @{Name="Clash";    Ports=(Detect-ClashPort)},
-        @{Name="sing-box"; Ports=(Detect-SingBoxPort)}
+        @{Name="Clash";    Ports=(Detect-ClashPort)}
     )
+    $singBoxPorts = @(Detect-SingBoxPort)
+    if ($singBoxPorts.Count -eq 2) {
+        $candidates += @{Name="sing-box"; Ports=$singBoxPorts}
+    }
 
     foreach ($c in $candidates) {
         $hp = $c.Ports[0]; $sp = $c.Ports[1]
@@ -217,6 +270,59 @@ function Get-CmdBatPath {
     return "$env:USERPROFILE\.proxy_init.cmd"
 }
 
+function Get-CmdAutoRunBackupKey {
+    return "HKCU:\Software\proxy-setup"
+}
+
+function Get-CmdAutoRunValue {
+    $key = "HKCU:\Software\Microsoft\Command Processor"
+    if (-not (Test-Path $key)) { return @{ Exists = $false; Value = "" } }
+    $item = Get-ItemProperty -Path $key -Name "AutoRun" -ErrorAction SilentlyContinue
+    $property = if ($item) { $item.PSObject.Properties["AutoRun"] } else { $null }
+    if ($null -eq $property) { return @{ Exists = $false; Value = "" } }
+    return @{ Exists = $true; Value = [string]$property.Value }
+}
+
+function Get-CmdAutoRunBackup {
+    $key = Get-CmdAutoRunBackupKey
+    if (-not (Test-Path $key)) { return @{ State = ""; Value = ""; Applied = "" } }
+    $item = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+    $state = if ($item -and $item.PSObject.Properties["CmdAutoRunBackupState"]) { [string]$item.CmdAutoRunBackupState } else { "" }
+    $value = if ($item -and $item.PSObject.Properties["CmdAutoRunBackupValue"]) { [string]$item.CmdAutoRunBackupValue } else { "" }
+    $applied = if ($item -and $item.PSObject.Properties["CmdAutoRunAppliedValue"]) { [string]$item.CmdAutoRunAppliedValue } else { "" }
+    return @{ State = $state; Value = $value; Applied = $applied }
+}
+
+function Save-CmdAutoRunBackup([string]$State, [string]$Value = "") {
+    $key = Get-CmdAutoRunBackupKey
+    if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+    Set-ItemProperty -Path $key -Name "CmdAutoRunBackupState" -Value $State -Force
+    if ($State -eq "present") {
+        Set-ItemProperty -Path $key -Name "CmdAutoRunBackupValue" -Value $Value -Force
+    } else {
+        Remove-ItemProperty -Path $key -Name "CmdAutoRunBackupValue" -Force -ErrorAction SilentlyContinue
+    }
+    Remove-ItemProperty -Path $key -Name "CmdAutoRunAppliedValue" -Force -ErrorAction SilentlyContinue
+}
+
+function Save-CmdAutoRunApplied([string]$Value) {
+    $key = Get-CmdAutoRunBackupKey
+    if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+    Set-ItemProperty -Path $key -Name "CmdAutoRunAppliedValue" -Value $Value -Force
+}
+
+function Clear-CmdAutoRunBackup {
+    $key = Get-CmdAutoRunBackupKey
+    if (-not (Test-Path $key)) { return }
+    Remove-ItemProperty -Path $key -Name "CmdAutoRunBackupState" -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $key -Name "CmdAutoRunBackupValue" -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $key -Name "CmdAutoRunAppliedValue" -Force -ErrorAction SilentlyContinue
+}
+
+function Test-CmdAutoRunManaged([string]$Value, [string]$BatPath) {
+    return $Value.IndexOf($BatPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
 function Get-ClaudeGeoDir {
     return (Join-Path $env:USERPROFILE ".proxy-setup")
 }
@@ -240,15 +346,16 @@ function Ensure-CmdProcessorKey {
 function Build-ProxyBlock($http_port, $socks5_port) {
     $proxy_url = "http://${PROXY_HOST}:${http_port}"
     $socks_url = "socks5://${PROXY_HOST}:${socks5_port}"
+    $noProxy = Get-MergedNoProxy
     $lines = @($PROXY_BLOCK_START)
     $lines += "`$env:HTTP_PROXY  = `"$proxy_url`""
     $lines += "`$env:HTTPS_PROXY = `"$proxy_url`""
     $lines += "`$env:ALL_PROXY   = `"$socks_url`""
-    $lines += "`$env:NO_PROXY    = `"$NO_PROXY`""
+    $lines += "`$env:NO_PROXY    = `"$noProxy`""
     $lines += "`$env:http_proxy  = `"$proxy_url`""
     $lines += "`$env:https_proxy = `"$proxy_url`""
     $lines += "`$env:all_proxy   = `"$socks_url`""
-    $lines += "`$env:no_proxy    = `"$NO_PROXY`""
+    $lines += "`$env:no_proxy    = `"$noProxy`""
     if ($ANTHROPIC_BASE_URL) {
         $lines += "`$env:ANTHROPIC_BASE_URL = `"$ANTHROPIC_BASE_URL`""
     }
@@ -267,9 +374,19 @@ function Write-Profile($http_port, $socks5_port) {
 
     if (Test-Path $rc) {
         $content = Get-Content $rc -Raw -Encoding UTF8
-        if ($content -match $startEsc) {
-            $pattern = "(?s)$startEsc.*$endEsc"
-            $newContent = [regex]::Replace($content, $pattern, $block)
+        $pattern = "$startEsc.*?$endEsc\r?\n?"
+        $regex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        $startCount = [regex]::Matches($content, $startEsc).Count
+        $endCount = [regex]::Matches($content, $endEsc).Count
+        $blockMatches = $regex.Matches($content)
+        if ($startCount -ne $endCount -or $blockMatches.Count -ne $startCount) {
+            err "代理配置标记未闭合或顺序异常，已停止写入以保护 $rc"
+            return $false
+        }
+        if ($blockMatches.Count -gt 0) {
+            $firstIndex = $blockMatches[0].Index
+            $withoutBlocks = $regex.Replace($content, "")
+            $newContent = $withoutBlocks.Insert($firstIndex, $block)
             Set-Content -Path $rc -Value $newContent -Encoding UTF8
             ok "已更新 $rc"
         } else {
@@ -283,12 +400,14 @@ function Write-Profile($http_port, $socks5_port) {
 
     Ensure-PowerShellExecutionPolicy
     Setup-CmdAutoRun $http_port $socks5_port
+    return $true
 }
 
 function Setup-CmdAutoRun($http_port, $socks5_port) {
     $bat = Get-CmdBatPath
     $proxy_url = "http://${PROXY_HOST}:${http_port}"
     $socks_url = "socks5://${PROXY_HOST}:${socks5_port}"
+    $noProxy = Get-MergedNoProxy
     $key = Ensure-CmdProcessorKey
 
     $batContent = "@echo off`r`n"
@@ -296,11 +415,11 @@ function Setup-CmdAutoRun($http_port, $socks5_port) {
     $batContent += "set HTTP_PROXY=$proxy_url`r`n"
     $batContent += "set HTTPS_PROXY=$proxy_url`r`n"
     $batContent += "set ALL_PROXY=$socks_url`r`n"
-    $batContent += "set NO_PROXY=$NO_PROXY`r`n"
+    $batContent += "set NO_PROXY=$noProxy`r`n"
     $batContent += "set http_proxy=$proxy_url`r`n"
     $batContent += "set https_proxy=$proxy_url`r`n"
     $batContent += "set all_proxy=$socks_url`r`n"
-    $batContent += "set no_proxy=$NO_PROXY`r`n"
+    $batContent += "set no_proxy=$noProxy`r`n"
     if ($ANTHROPIC_BASE_URL) {
         $batContent += "set ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL`r`n"
     }
@@ -310,8 +429,41 @@ function Setup-CmdAutoRun($http_port, $socks5_port) {
     ok "已写入 CMD 批处理: $bat"
 
     try {
-        Set-ItemProperty -Path $key -Name "AutoRun" -Value $bat -Force
-        ok "CMD AutoRun 注册表已设置"
+        $current = Get-CmdAutoRunValue
+        $backup = Get-CmdAutoRunBackup
+        if ($current.Exists -and (Test-CmdAutoRunManaged $current.Value $bat)) {
+            if ($backup.Applied -and $current.Value -ceq $backup.Applied) {
+                ok "CMD AutoRun 已包含代理初始化脚本"
+            } else {
+                warn "CMD AutoRun 包含代理初始化脚本，但值已被其他程序修改；仅更新批处理文件，不接管该值"
+            }
+            return
+        }
+
+        if ($current.Exists) {
+            Save-CmdAutoRunBackup "present" $current.Value
+        } else {
+            Save-CmdAutoRunBackup "absent"
+        }
+
+        $launcher = "call `"$bat`""
+        $autoRun = if ($current.Exists -and -not [string]::IsNullOrWhiteSpace($current.Value)) {
+            "$($current.Value) & $launcher"
+        } else {
+            $launcher
+        }
+        Set-ItemProperty -Path $key -Name "AutoRun" -Value $autoRun -Force
+        try {
+            Save-CmdAutoRunApplied $autoRun
+        } catch {
+            if ($current.Exists) {
+                Set-ItemProperty -Path $key -Name "AutoRun" -Value $current.Value -Force
+            } else {
+                Remove-ItemProperty -Path $key -Name "AutoRun" -Force -ErrorAction SilentlyContinue
+            }
+            throw "无法保存 CMD AutoRun 所有权状态，已回滚注册表值: $_"
+        }
+        ok "CMD AutoRun 注册表已设置，并保留原有命令"
     } catch {
         warn "CMD AutoRun 注册表设置失败: $_"
     }
@@ -320,20 +472,37 @@ function Setup-CmdAutoRun($http_port, $socks5_port) {
 function Remove-CmdAutoRun {
     $bat = Get-CmdBatPath
     $key = "HKCU:\Software\Microsoft\Command Processor"
-    if (Test-Path $bat) {
-        Remove-Item $bat -Force
-        ok "已删除 $bat"
-    }
+    $deleteBat = $true
     if (Test-Path $key) {
         try {
-            Remove-ItemProperty -Path $key -Name "AutoRun" -Force -ErrorAction Stop
-            ok "CMD AutoRun 注册表已删除"
+            $current = Get-CmdAutoRunValue
+            $backup = Get-CmdAutoRunBackup
+            if ($backup.Applied -and $current.Exists -and $current.Value -ceq $backup.Applied) {
+                if ($backup.State -eq "present") {
+                    Set-ItemProperty -Path $key -Name "AutoRun" -Value $backup.Value -Force
+                    ok "CMD AutoRun 注册表已恢复原有命令"
+                } else {
+                    Remove-ItemProperty -Path $key -Name "AutoRun" -Force -ErrorAction Stop
+                    ok "CMD AutoRun 注册表已移除代理初始化命令"
+                }
+                Clear-CmdAutoRunBackup
+            } elseif ($backup.Applied) {
+                warn "CMD AutoRun 已被其他程序修改，保留当前值且未覆盖；原始备份仍保留"
+                if ($current.Exists -and (Test-CmdAutoRunManaged $current.Value $bat)) { $deleteBat = $false }
+            } elseif ($current.Exists -and (Test-CmdAutoRunManaged $current.Value $bat)) {
+                warn "CMD AutoRun 来自旧版配置且没有精确所有权记录，已保留当前值"
+                $deleteBat = $false
+            }
         } catch {
-            try {
-                Set-ItemProperty -Path $key -Name "AutoRun" -Value "" -Force
-                ok "CMD AutoRun 注册表已清除"
-            } catch {}
+            warn "CMD AutoRun 注册表恢复失败: $_"
+            $deleteBat = $false
         }
+    }
+    if ($deleteBat -and (Test-Path $bat)) {
+        Remove-Item $bat -Force
+        ok "已删除 $bat"
+    } elseif (-not $deleteBat) {
+        warn "仍有 CMD AutoRun 命令引用 $bat，已保留该文件"
     }
 }
 
@@ -648,16 +817,8 @@ function Install-ClaudeGeoLauncher($http_port, $socks5_port) {
     $dir = Get-ClaudeGeoDir
     $launcher = Get-ClaudeGeoLauncherPath
     $cmdLauncher = Get-ClaudeGeoCmdPath
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    Set-Content -Path $launcher -Value (Build-ClaudeGeoLauncherScript $http_port $socks5_port) -Encoding UTF8
-    ok "已写入 Claude Code 画像启动器: $launcher"
-    Set-Content -Path $cmdLauncher -Value (Build-ClaudeGeoCmdScript) -Encoding ASCII
-    ok "已写入 CMD 启动器: $cmdLauncher"
-    Add-ClaudeGeoDirToUserPath
-
     $rc = Get-ProfilePath
     $dirRc = Split-Path $rc -Parent
-    if (-not (Test-Path $dirRc)) { New-Item -ItemType Directory -Path $dirRc -Force | Out-Null }
     $escapedLauncher = $launcher.Replace("'", "''")
     $block = @(
         $CLAUDE_GEO_BLOCK_START,
@@ -671,21 +832,49 @@ function Install-ClaudeGeoLauncher($http_port, $socks5_port) {
 
     $startEsc = [regex]::Escape($CLAUDE_GEO_BLOCK_START)
     $endEsc = [regex]::Escape($CLAUDE_GEO_BLOCK_END)
+    $content = $null
+    $regex = $null
+    $blockMatches = $null
     if (Test-Path $rc) {
         $content = Get-Content $rc -Raw -Encoding UTF8
-        if ($content -match $startEsc) {
-            $pattern = "(?s)$startEsc.*$endEsc\r?\n?"
-            $content = [regex]::Replace($content, $pattern, $block)
-            Set-Content -Path $rc -Value $content -Encoding UTF8
-        } else {
-            Add-Content -Path $rc -Value "`r`n$block" -Encoding UTF8
+        $pattern = "$startEsc.*?$endEsc\r?\n?"
+        $regex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        $startCount = [regex]::Matches($content, $startEsc).Count
+        $endCount = [regex]::Matches($content, $endEsc).Count
+        $blockMatches = $regex.Matches($content)
+        if ($startCount -ne $endCount -or $blockMatches.Count -ne $startCount) {
+            err "claude-geo 配置标记未闭合或顺序异常，已停止写入以保护 $rc"
+            return $false
         }
-    } else {
-        Set-Content -Path $rc -Value $block -Encoding UTF8
     }
 
+    try {
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null }
+        if (-not (Test-Path $dirRc)) { New-Item -ItemType Directory -Path $dirRc -Force -ErrorAction Stop | Out-Null }
+        Set-Content -Path $launcher -Value (Build-ClaudeGeoLauncherScript $http_port $socks5_port) -Encoding UTF8 -ErrorAction Stop
+        Set-Content -Path $cmdLauncher -Value (Build-ClaudeGeoCmdScript) -Encoding ASCII -ErrorAction Stop
+
+        if ($null -ne $content -and $blockMatches.Count -gt 0) {
+            $firstIndex = $blockMatches[0].Index
+            $withoutBlocks = $regex.Replace($content, "")
+            $content = $withoutBlocks.Insert($firstIndex, $block)
+            Set-Content -Path $rc -Value $content -Encoding UTF8 -ErrorAction Stop
+        } elseif ($null -ne $content) {
+            Add-Content -Path $rc -Value "`r`n$block" -Encoding UTF8 -ErrorAction Stop
+        } else {
+            Set-Content -Path $rc -Value $block -Encoding UTF8 -ErrorAction Stop
+        }
+        Add-ClaudeGeoDirToUserPath
+    } catch {
+        err "安装 claude-geo 失败: $_"
+        return $false
+    }
+
+    ok "已写入 Claude Code 画像启动器: $launcher"
+    ok "已写入 CMD 启动器: $cmdLauncher"
     ok "已安装 PowerShell 命令: claude-geo (别名 cgeo)"
     info "以后从新 PowerShell/CMD 窗口运行 claude-geo，即可按当前代理出口自动匹配 TZ/LANG 后启动 Claude Code"
+    return $true
 }
 
 function Remove-ClaudeGeoLauncher {
@@ -694,24 +883,42 @@ function Remove-ClaudeGeoLauncher {
     $endEsc = [regex]::Escape($CLAUDE_GEO_BLOCK_END)
     if (Test-Path $rc) {
         $content = Get-Content $rc -Raw -Encoding UTF8
-        if ($content -match $startEsc) {
-            $pattern = "(?s)$startEsc.*$endEsc\r?\n?"
-            Set-Content -Path $rc -Value ([regex]::Replace($content, $pattern, "")) -Encoding UTF8
+        $pattern = "$startEsc.*?$endEsc\r?\n?"
+        $regex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        $startCount = [regex]::Matches($content, $startEsc).Count
+        $endCount = [regex]::Matches($content, $endEsc).Count
+        $blockMatches = $regex.Matches($content)
+        if ($startCount -ne $endCount -or $blockMatches.Count -ne $startCount) {
+            warn "claude-geo 配置标记未闭合或顺序异常，已保留 $rc"
+            return $false
+        } elseif ($blockMatches.Count -gt 0) {
+            try {
+                Set-Content -Path $rc -Value ($regex.Replace($content, "")) -Encoding UTF8 -ErrorAction Stop
+            } catch {
+                warn "从 $rc 移除 claude-geo 命令失败: $_"
+                return $false
+            }
             ok "已从 $rc 移除 claude-geo 命令"
         }
     }
 
-    $launcher = Get-ClaudeGeoLauncherPath
-    if (Test-Path $launcher) {
-        Remove-Item $launcher -Force
-        ok "已删除 $launcher"
+    try {
+        $launcher = Get-ClaudeGeoLauncherPath
+        if (Test-Path $launcher) {
+            Remove-Item $launcher -Force -ErrorAction Stop
+            ok "已删除 $launcher"
+        }
+        $cmdLauncher = Get-ClaudeGeoCmdPath
+        if (Test-Path $cmdLauncher) {
+            Remove-Item $cmdLauncher -Force -ErrorAction Stop
+            ok "已删除 $cmdLauncher"
+        }
+        Remove-ClaudeGeoDirFromUserPath
+    } catch {
+        warn "移除 claude-geo 启动器失败: $_"
+        return $false
     }
-    $cmdLauncher = Get-ClaudeGeoCmdPath
-    if (Test-Path $cmdLauncher) {
-        Remove-Item $cmdLauncher -Force
-        ok "已删除 $cmdLauncher"
-    }
-    Remove-ClaudeGeoDirFromUserPath
+    return $true
 }
 
 function Ensure-PowerShellExecutionPolicy {
@@ -749,42 +956,158 @@ function Get-NpmCommand {
     return $null
 }
 
+function Get-ProxyStatePath {
+    return (Join-Path (Get-ClaudeGeoDir) "proxy-config-state.v1")
+}
+
+function ConvertTo-ProxyStateValue([string]$Value) {
+    return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Value))
+}
+
+function ConvertFrom-ProxyStateValue([string]$Value) {
+    if ([string]::IsNullOrEmpty($Value)) { return "" }
+    return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}
+
+function Get-ProxyState {
+    $state = @{}
+    $path = Get-ProxyStatePath
+    if (-not (Test-Path $path)) { return $state }
+    foreach ($line in Get-Content -LiteralPath $path -ErrorAction SilentlyContinue) {
+        $pair = $line -split "=", 2
+        if ($pair.Count -ne 2 -or $pair[0] -notmatch '^[A-Za-z0-9_.-]+$') { continue }
+        try { $state[$pair[0]] = ConvertFrom-ProxyStateValue $pair[1] } catch {}
+    }
+    return $state
+}
+
+function Save-ProxyState($State) {
+    $path = Get-ProxyStatePath
+    if ($State.Count -eq 0) {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+        return
+    }
+    $dir = Split-Path -Parent $path
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $tmp = Join-Path $dir ("proxy-config-state-{0}.tmp" -f [guid]::NewGuid().ToString("N"))
+    $lines = @($State.Keys | Sort-Object | ForEach-Object { "{0}={1}" -f $_, (ConvertTo-ProxyStateValue ([string]$State[$_])) })
+    [System.IO.File]::WriteAllLines($tmp, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+}
+
+function Record-ManagedProxySuccess($State, [string]$Name, [string]$CurrentValue, [string]$AppliedValue) {
+    $originalKey = "$Name.original"
+    $appliedKey = "$Name.applied"
+    if (-not $State.ContainsKey($appliedKey) -or $State[$appliedKey] -cne $CurrentValue) {
+        $State[$originalKey] = $CurrentValue
+    } elseif (-not $State.ContainsKey($originalKey)) {
+        $State[$originalKey] = ""
+    }
+    $State[$appliedKey] = $AppliedValue
+}
+
+function Get-ToolProxyValue([string]$CommandPath, [string[]]$Arguments) {
+    try {
+        $output = & $CommandPath @Arguments 2>$null
+        if ($LASTEXITCODE -ne 0) { return "" }
+        $value = ([string]($output | Select-Object -First 1)).Trim()
+        if ($value -in @("", "null", "undefined")) { return "" }
+        return $value
+    } catch {
+        return ""
+    }
+}
+
+function Test-LoopbackProxyValue([string]$Value) {
+    return $Value -match '^https?://(127\.0\.0\.1|localhost)(:\d+)?(/|$)'
+}
+
+function Restore-ManagedProxySetting($State, [string]$Name, [string]$CurrentValue, [scriptblock]$SetValue, [scriptblock]$ClearValue, [string]$Label) {
+    $originalKey = "$Name.original"
+    $appliedKey = "$Name.applied"
+    if ($State.ContainsKey($appliedKey)) {
+        if ($CurrentValue -cne [string]$State[$appliedKey]) {
+            warn "$Label 已被其他配置修改，保留当前值"
+            return
+        }
+        $original = if ($State.ContainsKey($originalKey)) { [string]$State[$originalKey] } else { "" }
+        $success = if ($original) { & $SetValue $original } else { & $ClearValue }
+        if ($success) {
+            $State.Remove($originalKey)
+            $State.Remove($appliedKey)
+            ok "$Label 已恢复"
+        } else {
+            warn "$Label 恢复失败"
+        }
+        return
+    }
+    if ($CurrentValue -and (Test-LoopbackProxyValue $CurrentValue)) {
+        if (& $ClearValue) { ok "$Label 已清除旧版本地代理配置" }
+    }
+}
+
 function Remove-Proxy {
+    $allOk = $true
     $rc = Get-ProfilePath
     $startEsc = [regex]::Escape($PROXY_BLOCK_START)
     $endEsc   = [regex]::Escape($PROXY_BLOCK_END)
 
     if (Test-Path $rc) {
         $content = Get-Content $rc -Raw -Encoding UTF8
-        if ($content -match $startEsc) {
-            $pattern = "(?s)$startEsc.*$endEsc\r?\n?"
-            $newContent = [regex]::Replace($content, $pattern, "")
+        $pattern = "$startEsc.*?$endEsc\r?\n?"
+        $regex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        $startCount = [regex]::Matches($content, $startEsc).Count
+        $endCount = [regex]::Matches($content, $endEsc).Count
+        $blockMatches = $regex.Matches($content)
+        if ($startCount -ne $endCount -or $blockMatches.Count -ne $startCount) {
+            warn "代理配置标记未闭合或顺序异常，已保留 $rc"
+            $allOk = $false
+        } elseif ($blockMatches.Count -gt 0) {
+            $newContent = $regex.Replace($content, "")
             Set-Content -Path $rc -Value $newContent -Encoding UTF8
             ok "已从 $rc 移除代理配置"
         }
     }
 
     Remove-CmdAutoRun
-    Remove-ClaudeGeoLauncher
+    if (-not (Remove-ClaudeGeoLauncher)) { $allOk = $false }
 
+    $state = Get-ProxyState
     $npm = Get-NpmCommand
     if ($npm) {
-        & $npm config delete proxy 2>$null
-        & $npm config delete https-proxy 2>$null
-        ok "npm 代理已清除"
+        $setNpmProxy = { param($value) & $npm config set proxy $value 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        $clearNpmProxy = { & $npm config delete proxy 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        $setNpmHttps = { param($value) & $npm config set https-proxy $value 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        $clearNpmHttps = { & $npm config delete https-proxy 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        Restore-ManagedProxySetting $state "npm_proxy" (Get-ToolProxyValue $npm @("config", "get", "proxy")) $setNpmProxy $clearNpmProxy "npm proxy"
+        Restore-ManagedProxySetting $state "npm_https_proxy" (Get-ToolProxyValue $npm @("config", "get", "https-proxy")) $setNpmHttps $clearNpmHttps "npm https-proxy"
     }
 
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        git config --global --unset http.proxy 2>$null
-        git config --global --unset https.proxy 2>$null
-        ok "git 代理已清除"
+    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($git -and $git.Source) {
+        $gitPath = [string]$git.Source
+        $setGitHttp = { param($value) & $gitPath config --global http.proxy $value 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        $clearGitHttp = { & $gitPath config --global --unset http.proxy 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        $setGitHttps = { param($value) & $gitPath config --global https.proxy $value 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        $clearGitHttps = { & $gitPath config --global --unset https.proxy 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        Restore-ManagedProxySetting $state "git_http_proxy" (Get-ToolProxyValue $gitPath @("config", "--global", "--get", "http.proxy")) $setGitHttp $clearGitHttp "git http.proxy"
+        Restore-ManagedProxySetting $state "git_https_proxy" (Get-ToolProxyValue $gitPath @("config", "--global", "--get", "https.proxy")) $setGitHttps $clearGitHttps "git https.proxy"
     }
 
     $pip = Get-PipCommand
     if ($pip) {
-        & $pip config unset global.proxy 2>$null
-        if ($LASTEXITCODE -eq 0) { ok "pip 代理已清除" } else { warn "pip 代理清除失败" }
+        $setPipProxy = { param($value) & $pip config set global.proxy $value 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        $clearPipProxy = { & $pip config unset global.proxy 2>$null; $LASTEXITCODE -eq 0 }.GetNewClosure()
+        Restore-ManagedProxySetting $state "pip_global_proxy" (Get-ToolProxyValue $pip @("config", "get", "global.proxy")) $setPipProxy $clearPipProxy "pip global.proxy"
     }
+    try {
+        Save-ProxyState $state
+    } catch {
+        warn "保存代理恢复状态失败: $_"
+        $allOk = $false
+    }
+    Clear-CurrentEnv
+    return $allOk
 }
 
 # ---- npm / git 配置 ----
@@ -796,20 +1119,64 @@ function Configure-Npm($http_port) {
         return
     }
     $url = "http://${PROXY_HOST}:${http_port}"
+    $state = Get-ProxyState
+    $currentProxy = Get-ToolProxyValue $npm @("config", "get", "proxy")
     & $npm config set proxy $url 2>$null
+    $proxyOk = $LASTEXITCODE -eq 0
+    if ($proxyOk) { Record-ManagedProxySuccess $state "npm_proxy" $currentProxy $url }
+    $currentHttps = Get-ToolProxyValue $npm @("config", "get", "https-proxy")
     & $npm config set https-proxy $url 2>$null
-    ok "npm 代理已设置: $url"
+    $httpsOk = $LASTEXITCODE -eq 0
+    if ($httpsOk) { Record-ManagedProxySuccess $state "npm_https_proxy" $currentHttps $url }
+    if ($proxyOk -or $httpsOk) {
+        try {
+            Save-ProxyState $state
+        } catch {
+            if ($proxyOk) {
+                if ($currentProxy) { & $npm config set proxy $currentProxy 2>$null } else { & $npm config delete proxy 2>$null }
+            }
+            if ($httpsOk) {
+                if ($currentHttps) { & $npm config set https-proxy $currentHttps 2>$null } else { & $npm config delete https-proxy 2>$null }
+            }
+            warn "npm 代理状态保存失败，已回滚: $_"
+            return
+        }
+    }
+    if ($proxyOk -and $httpsOk) { ok "npm 代理已设置: $url" } else { warn "npm 代理配置未全部成功" }
 }
 
 function Configure-Git($http_port) {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $git -or -not $git.Source) {
         warn "未找到 git，跳过"
         return
     }
+    $gitPath = [string]$git.Source
     $url = "http://${PROXY_HOST}:${http_port}"
-    git config --global http.proxy $url 2>$null
-    git config --global https.proxy $url 2>$null
-    ok "git 代理已设置: $url"
+    $state = Get-ProxyState
+    $currentHttp = Get-ToolProxyValue $gitPath @("config", "--global", "--get", "http.proxy")
+    & $gitPath config --global http.proxy $url 2>$null
+    $httpOk = $LASTEXITCODE -eq 0
+    if ($httpOk) { Record-ManagedProxySuccess $state "git_http_proxy" $currentHttp $url }
+    $currentHttps = Get-ToolProxyValue $gitPath @("config", "--global", "--get", "https.proxy")
+    & $gitPath config --global https.proxy $url 2>$null
+    $httpsOk = $LASTEXITCODE -eq 0
+    if ($httpsOk) { Record-ManagedProxySuccess $state "git_https_proxy" $currentHttps $url }
+    if ($httpOk -or $httpsOk) {
+        try {
+            Save-ProxyState $state
+        } catch {
+            if ($httpOk) {
+                if ($currentHttp) { & $gitPath config --global http.proxy $currentHttp 2>$null } else { & $gitPath config --global --unset http.proxy 2>$null }
+            }
+            if ($httpsOk) {
+                if ($currentHttps) { & $gitPath config --global https.proxy $currentHttps 2>$null } else { & $gitPath config --global --unset https.proxy 2>$null }
+            }
+            warn "git 代理状态保存失败，已回滚: $_"
+            return
+        }
+    }
+    if ($httpOk -and $httpsOk) { ok "git 代理已设置: $url" } else { warn "git 代理配置未全部成功" }
 }
 
 function Get-PipCommand {
@@ -827,8 +1194,20 @@ function Configure-Pip($http_port) {
         return
     }
     $url = "http://${PROXY_HOST}:${http_port}"
+    $state = Get-ProxyState
+    $currentProxy = Get-ToolProxyValue $pip @("config", "get", "global.proxy")
     & $pip config set global.proxy $url 2>$null
-    if ($LASTEXITCODE -eq 0) { ok "pip 代理已设置: $url" } else { warn "pip 代理设置失败" }
+    if ($LASTEXITCODE -eq 0) {
+        Record-ManagedProxySuccess $state "pip_global_proxy" $currentProxy $url
+        try {
+            Save-ProxyState $state
+        } catch {
+            if ($currentProxy) { & $pip config set global.proxy $currentProxy 2>$null } else { & $pip config unset global.proxy 2>$null }
+            warn "pip 代理状态保存失败，已回滚: $_"
+            return
+        }
+        ok "pip 代理已设置: $url"
+    } else { warn "pip 代理设置失败" }
 }
 
 # ---- 验证与测试 ----
@@ -1069,14 +1448,15 @@ function Clear-CurrentEnv {
 function Set-EnvCurrentSession($http_port, $socks5_port) {
     $proxy_url = "http://${PROXY_HOST}:${http_port}"
     $socks_url = "socks5://${PROXY_HOST}:${socks5_port}"
+    $noProxy = Get-MergedNoProxy
     [Environment]::SetEnvironmentVariable("HTTP_PROXY",   $proxy_url, "Process")
     [Environment]::SetEnvironmentVariable("HTTPS_PROXY",  $proxy_url, "Process")
     [Environment]::SetEnvironmentVariable("ALL_PROXY",    $socks_url, "Process")
-    [Environment]::SetEnvironmentVariable("NO_PROXY",     $NO_PROXY, "Process")
+    [Environment]::SetEnvironmentVariable("NO_PROXY",     $noProxy, "Process")
     [Environment]::SetEnvironmentVariable("http_proxy",   $proxy_url, "Process")
     [Environment]::SetEnvironmentVariable("https_proxy",  $proxy_url, "Process")
     [Environment]::SetEnvironmentVariable("all_proxy",    $socks_url, "Process")
-    [Environment]::SetEnvironmentVariable("no_proxy",     $NO_PROXY, "Process")
+    [Environment]::SetEnvironmentVariable("no_proxy",     $noProxy, "Process")
     if ($ANTHROPIC_BASE_URL) {
         [Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", $ANTHROPIC_BASE_URL, "Process")
     }
@@ -1106,54 +1486,185 @@ $SMART_DNS_REGS = @(
     }
 )
 
+function Get-SmartDNSStatePath {
+    return (Join-Path (Get-ClaudeGeoDir) "smart-dns-state.json")
+}
+
+function Get-SmartDNSState {
+    $state = @{ Entries = @{}; Valid = $true }
+    $path = Get-SmartDNSStatePath
+    if (-not (Test-Path -LiteralPath $path)) { return $state }
+    try {
+        $data = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $data -or -not $data.PSObject.Properties["Entries"]) {
+            throw "缺少 Entries 字段"
+        }
+        if ($data.Entries) {
+            foreach ($property in $data.Entries.PSObject.Properties) {
+                $entry = $property.Value
+                $state.Entries[$property.Name] = @{
+                    Key            = [string]$entry.Key
+                    Name           = [string]$entry.Name
+                    OriginalExists = [bool]$entry.OriginalExists
+                    OriginalValue  = $entry.OriginalValue
+                    AppliedValue   = $entry.AppliedValue
+                }
+            }
+        }
+    } catch {
+        $state.Valid = $false
+        warn "智能DNS 状态文件损坏，已停止使用该备份: $_"
+    }
+    return $state
+}
+
+function Save-SmartDNSState($State) {
+    $path = Get-SmartDNSStatePath
+    if ($State.Entries.Count -eq 0) {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+        return
+    }
+    $dir = Split-Path -Parent $path
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $entries = [ordered]@{}
+    foreach ($name in ($State.Entries.Keys | Sort-Object)) {
+        $entry = $State.Entries[$name]
+        $entries[$name] = [ordered]@{
+            Key            = [string]$entry.Key
+            Name           = [string]$entry.Name
+            OriginalExists = [bool]$entry.OriginalExists
+            OriginalValue  = $entry.OriginalValue
+            AppliedValue   = $entry.AppliedValue
+        }
+    }
+    $json = [ordered]@{ Version = 1; Entries = $entries } | ConvertTo-Json -Depth 6
+    $tmp = Join-Path $dir ("smart-dns-state-{0}.tmp" -f [guid]::NewGuid().ToString("N"))
+    [System.IO.File]::WriteAllText($tmp, $json, [System.Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+}
+
+function Get-SmartDNSRegistryValue([string]$Key, [string]$Name) {
+    if (-not (Test-Path $Key)) { return @{ ReadOk = $true; Exists = $false; Value = $null } }
+    try {
+        $item = Get-ItemProperty -Path $Key -ErrorAction Stop
+        $property = $item.PSObject.Properties[$Name]
+        if ($null -eq $property) { return @{ ReadOk = $true; Exists = $false; Value = $null } }
+        return @{ ReadOk = $true; Exists = $true; Value = $property.Value }
+    } catch {
+        return @{ ReadOk = $false; Exists = $false; Value = $null; Error = $_ }
+    }
+}
+
+function Test-SmartDNSValueEqual($Current, $Expected) {
+    return $Current.Exists -and ([string]$Current.Value -ceq [string]$Expected)
+}
+
+function Set-SmartDNSManagedValue($Reg) {
+    $state = Get-SmartDNSState
+    if (-not $state.Valid) {
+        warn "智能DNS 状态文件不可用，未修改注册表；请先检查或备份 $(Get-SmartDNSStatePath)"
+        return $false
+    }
+    $current = Get-SmartDNSRegistryValue $Reg.Key $Reg.Name
+    if (-not $current.ReadOk) {
+        warn "读取 $($Reg.Name) 失败，未修改注册表: $($current.Error)"
+        return $false
+    }
+
+    $hadPrevious = $state.Entries.ContainsKey($Reg.Name)
+    $previous = if ($hadPrevious) { $state.Entries[$Reg.Name] } else { $null }
+    if (-not $hadPrevious -or -not (Test-SmartDNSValueEqual $current $previous.AppliedValue)) {
+        $state.Entries[$Reg.Name] = @{
+            Key            = $Reg.Key
+            Name           = $Reg.Name
+            OriginalExists = [bool]$current.Exists
+            OriginalValue  = $current.Value
+            AppliedValue   = $Reg.Value
+        }
+    } else {
+        $state.Entries[$Reg.Name].AppliedValue = $Reg.Value
+    }
+
+    try {
+        Save-SmartDNSState $state
+    } catch {
+        warn "保存 $($Reg.Name) 原始状态失败，未修改注册表: $_"
+        return $false
+    }
+
+    try {
+        if (-not (Test-Path $Reg.Key)) { New-Item -Path $Reg.Key -Force | Out-Null }
+        Set-ItemProperty -Path $Reg.Key -Name $Reg.Name -Value $Reg.Value -Type DWord -Force -ErrorAction Stop
+        ok "$($Reg.Name) = $($Reg.Value)"
+        return $true
+    } catch {
+        if ($hadPrevious) { $state.Entries[$Reg.Name] = $previous } else { $state.Entries.Remove($Reg.Name) }
+        try { Save-SmartDNSState $state } catch { warn "回滚智能DNS 状态文件失败: $_" }
+        warn "设置失败（可能需要管理员权限）: $_"
+        return $false
+    }
+}
+
+function Restore-SmartDNSManagedValue($Reg) {
+    $state = Get-SmartDNSState
+    if (-not $state.Valid) {
+        warn "智能DNS 状态文件不可用，已保留当前注册表值"
+        return $false
+    }
+    if (-not $state.Entries.ContainsKey($Reg.Name)) {
+        warn "$($Reg.Name) 没有本脚本保存的原始状态，已保留当前值"
+        return $false
+    }
+
+    $entry = $state.Entries[$Reg.Name]
+    $current = Get-SmartDNSRegistryValue $Reg.Key $Reg.Name
+    if (-not $current.ReadOk) {
+        warn "读取 $($Reg.Name) 失败，未修改注册表: $($current.Error)"
+        return $false
+    }
+    if (-not (Test-SmartDNSValueEqual $current $entry.AppliedValue)) {
+        $state.Entries.Remove($Reg.Name)
+        try { Save-SmartDNSState $state } catch { warn "更新智能DNS 状态文件失败: $_"; return $false }
+        warn "$($Reg.Name) 已被其他程序修改，保留当前值并放弃所有权"
+        return $false
+    }
+
+    try {
+        if ($entry.OriginalExists) {
+            if (-not (Test-Path $Reg.Key)) { New-Item -Path $Reg.Key -Force | Out-Null }
+            Set-ItemProperty -Path $Reg.Key -Name $Reg.Name -Value $entry.OriginalValue -Type DWord -Force -ErrorAction Stop
+        } elseif (Test-Path $Reg.Key) {
+            Remove-ItemProperty -Path $Reg.Key -Name $Reg.Name -Force -ErrorAction Stop
+        }
+        $state.Entries.Remove($Reg.Name)
+        Save-SmartDNSState $state
+        ok "$($Reg.Name) 已恢复原始状态"
+        return $true
+    } catch {
+        warn "恢复失败（可能需要管理员权限）: $_"
+        return $false
+    }
+}
+
 function Check-SmartDNSStatus {
     $results = @()
     foreach ($reg in $SMART_DNS_REGS) {
-        try {
-            $current = Get-ItemProperty -Path $reg.Key -Name $reg.Name -ErrorAction Stop
-            $val = $current.$($reg.Name)
-            $isDisabled = ($val -eq $reg.Value)
-            $results += @{
-                Desc       = $reg.Desc
-                Current    = $val
-                Target     = $reg.Value
-                IsDisabled = $isDisabled
-            }
-        } catch {
-            $results += @{
-                Desc       = $reg.Desc
-                Current    = -1
-                Target     = $reg.Value
-                IsDisabled = $false
-            }
+        $current = Get-SmartDNSRegistryValue $reg.Key $reg.Name
+        $val = if ($current.Exists) { $current.Value } else { -1 }
+        $results += @{
+            Desc       = $reg.Desc
+            Current    = $val
+            Target     = $reg.Value
+            IsDisabled = (Test-SmartDNSValueEqual $current $reg.Value)
         }
     }
     return $results
 }
 
 function Toggle-SmartDNSSingle($key, $name, $value, $enable) {
-    <#
-    .SYNOPSIS
-        切换单个智能DNS 注册表项
-    #>
-    if ($enable) {
-        try {
-            if (-not (Test-Path $key)) {
-                New-Item -Path $key -Force | Out-Null
-            }
-            Set-ItemProperty -Path $key -Name $name -Value $value -Type DWord -Force
-            ok "$name = $value"
-        } catch {
-            warn "设置失败（可能需要管理员权限）: $_"
-        }
-    } else {
-        try {
-            Remove-ItemProperty -Path $key -Name $name -Force -ErrorAction Stop
-            ok "$name 已恢复系统默认"
-        } catch {
-            warn "恢复失败（可能需要管理员权限）: $_"
-        }
-    }
+    $reg = @{ Key = $key; Name = $name; Value = $value; Desc = $name }
+    if ($enable) { return (Set-SmartDNSManagedValue $reg) }
+    return (Restore-SmartDNSManagedValue $reg)
 }
 
 function Disable-SmartDNS {
@@ -1164,16 +1675,7 @@ function Disable-SmartDNS {
     $allOk = $true
     foreach ($reg in $SMART_DNS_REGS) {
         info "正在设置 $($reg.Name) = $($reg.Value) ..."
-        try {
-            if (-not (Test-Path $reg.Key)) {
-                New-Item -Path $reg.Key -Force | Out-Null
-            }
-            Set-ItemProperty -Path $reg.Key -Name $reg.Name -Value $reg.Value -Type DWord -Force
-            ok "$($reg.Name) = $($reg.Value)"
-        } catch {
-            warn "设置失败（可能需要管理员权限）: $_"
-            $allOk = $false
-        }
+        if (-not (Set-SmartDNSManagedValue $reg)) { $allOk = $false }
     }
 
     if ($allOk) {
@@ -1191,16 +1693,16 @@ function Restore-SmartDNS {
     bold "  恢复 Windows 智能DNS 默认设置 ..."
     Write-Host "  $( '-' * 45 )"
 
+    $allOk = $true
     foreach ($reg in $SMART_DNS_REGS) {
         info "正在恢复 $($reg.Name) ..."
-        try {
-            Remove-ItemProperty -Path $reg.Key -Name $reg.Name -Force -ErrorAction Stop
-            ok "$($reg.Name) 已恢复系统默认"
-        } catch {
-            ok "$($reg.Name) 已是系统默认"
-        }
+        if (-not (Restore-SmartDNSManagedValue $reg)) { $allOk = $false }
     }
-    ok "已恢复默认 DNS 行为"
+    if ($allOk) {
+        ok "已恢复脚本修改前的 DNS 行为"
+    } else {
+        warn "部分项目未恢复；没有备份或已被外部修改的值均已保留"
+    }
 }
 
 function Test-DNSLeak {
@@ -1475,26 +1977,27 @@ function Show-SmartDNSMenu {
             "1" {
                 $reg = $SMART_DNS_REGS[0]
                 $enable = -not $status[0].IsDisabled
-                Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
+                $null = Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
             }
             "2" {
                 $reg = $SMART_DNS_REGS[1]
                 $enable = -not $status[1].IsDisabled
-                Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
+                $null = Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
             }
             "3" {
                 $reg = $SMART_DNS_REGS[2]
                 $enable = -not $status[2].IsDisabled
-                Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
+                $null = Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $enable
             }
             "4" {
+                $allOk = $true
                 for ($i = 0; $i -lt 2; $i++) {
                     if (-not $status[$i].IsDisabled) {
                         $reg = $SMART_DNS_REGS[$i]
-                        Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $true
+                        if (-not (Toggle-SmartDNSSingle $reg.Key $reg.Name $reg.Value $true)) { $allOk = $false }
                     }
                 }
-                ok "推荐项已禁用 (前两项)"
+                if ($allOk) { ok "推荐项已禁用 (前两项)" } else { warn "推荐项未能全部禁用" }
             }
             "5" { Restore-SmartDNS }
             "6" { Test-DNSLeak }
@@ -1545,7 +2048,7 @@ function Main {
                     warn "端口 $hp 未监听，请确认代理客户端已启动"
                 }
 
-                Write-Profile $hp $sp
+                if (-not (Write-Profile $hp $sp)) { continue }
                 Configure-Npm $hp
                 Configure-Pip $hp
 
@@ -1565,12 +2068,14 @@ function Main {
             }
             "2" {
                 $h = Read-Host "  输入 HTTP 代理端口 [默认 $DEFAULT_HTTP_PORT]"
-                if ([string]::IsNullOrWhiteSpace($h)) { $hp = $DEFAULT_HTTP_PORT } else { $hp = [int]$h }
+                $hp = ConvertTo-ProxyPort $h $DEFAULT_HTTP_PORT "HTTP"
+                if ($null -eq $hp) { continue }
                 $ds = $hp
                 $s = Read-Host "  输入 SOCKS5 代理端口 [默认 $ds]"
-                if ([string]::IsNullOrWhiteSpace($s)) { $sp = $ds } else { $sp = [int]$s }
+                $sp = ConvertTo-ProxyPort $s $ds "SOCKS5"
+                if ($null -eq $sp) { continue }
 
-                Write-Profile $hp $sp
+                if (-not (Write-Profile $hp $sp)) { continue }
                 Configure-Npm $hp
                 Configure-Pip $hp
 
@@ -1587,8 +2092,11 @@ function Main {
                 Write-Host "  如需安装 Claude Code 画像一致启动器，请在主菜单选择 10"
             }
             "3" {
-                Remove-Proxy
-                bold "=== 代理配置已全部清除 ==="
+                if (Remove-Proxy) {
+                    bold "=== 代理配置已全部清除 ==="
+                } else {
+                    warn "代理配置未能全部清除，请根据上方错误处理后重试"
+                }
             }
             "4" {
                 $hp, $null = Auto-DetectPorts
@@ -1619,7 +2127,9 @@ function Main {
             "10" {
                 $hp, $sp = Auto-DetectPorts
                 info "使用端口: HTTP=$hp, SOCKS5=$sp"
-                Install-ClaudeGeoLauncher $hp $sp
+                if (-not (Install-ClaudeGeoLauncher $hp $sp)) {
+                    warn "claude-geo 安装失败"
+                }
             }
             default {
                 warn "无效选项，请重新输入"

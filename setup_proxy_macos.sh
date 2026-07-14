@@ -14,7 +14,7 @@ DEFAULT_HTTP_PORT=7897
 DEFAULT_SOCKS5_PORT=7897
 PORT_SCAN_RADIUS="${PORT_SCAN_RADIUS:-10}"
 HOST="127.0.0.1"
-NO_PROXY="localhost,127.0.0.1,::1"
+DEFAULT_NO_PROXY="localhost,127.0.0.1,::1"
 ANTHROPIC_BASE_URL=""   # 中转地址，留空则不写入
 
 CF_TRACE_TARGETS=(
@@ -40,6 +40,22 @@ ok()    { printf '  \033[0;32m✓ %s\033[0m\n' "$1" >&2; }
 warn()  { printf '  \033[1;33m⚠ %s\033[0m\n' "$1" >&2; }
 err()   { printf '  \033[0;31m✗ %s\033[0m\n' "$1" >&2; }
 bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
+
+get_merged_no_proxy() {
+    printf '%s' "${NO_PROXY:-},${no_proxy:-},$DEFAULT_NO_PROXY" | awk -F, '
+        {
+            for (i = 1; i <= NF; i++) {
+                value = $i
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                key = tolower(value)
+                if (value != "" && !seen[key]++) {
+                    output = output (output == "" ? "" : ",") value
+                }
+            }
+        }
+        END { print output }
+    '
+}
 
 require_platform() {
     local os_name
@@ -138,19 +154,51 @@ detect_v2rayn_port() {
     echo "10808 10808"
 }
 
-detect_singbox_port() {
-    local port=$DEFAULT_HTTP_PORT
+detect_singbox_ports() {
     local configs=(
         "$HOME/.config/sing-box/config.json"
         "$HOME/.config/sing-box/config.yaml"
     )
+    if ! command -v perl >/dev/null 2>&1 || ! perl -MJSON::PP -e '1' >/dev/null 2>&1; then
+        warn "macOS 缺少可用的 Perl JSON::PP，跳过 sing-box 自动检测"
+        return 1
+    fi
     for cfg in "${configs[@]}"; do
         [[ -f "$cfg" ]] || continue
-        local _p
-        _p=$(grep -oE '"listen_port"[[:space:]]*:[[:space:]]*[0-9]+' "$cfg" 2>/dev/null | grep -oE "[0-9]+" | head -1)
-        [[ -n "$_p" ]] && { info "检测到 sing-box 端口: $_p  ($cfg)"; echo "$_p"; return; }
+        local http_port="" socks_port="" inbound_type inbound_port
+        while IFS='|' read -r inbound_type inbound_port; do
+            [[ -n "$inbound_port" ]] || continue
+            case "$inbound_type" in
+                mixed)
+                    info "sing-box mixed port: $inbound_port ($cfg)"
+                    echo "$inbound_port $inbound_port"
+                    return 0
+                    ;;
+                http) http_port="$inbound_port" ;;
+                socks) socks_port="$inbound_port" ;;
+            esac
+        done < <(perl -MJSON::PP=decode_json -0777 -ne '
+            my $data = eval { decode_json($_) };
+            next unless ref($data) eq "HASH" && ref($data->{inbounds}) eq "ARRAY";
+            for my $inbound (@{$data->{inbounds}}) {
+                next unless ref($inbound) eq "HASH";
+                my $type = lc($inbound->{type} // $inbound->{protocol} // "");
+                next unless $type eq "mixed" || $type eq "http" || $type eq "socks";
+                my $port = $inbound->{listen_port} // $inbound->{port};
+                next unless defined($port) && $port =~ /^\d+$/;
+                print "$type|$port\n";
+            }
+        ' "$cfg" 2>/dev/null)
+        if [[ -n "$http_port" && -n "$socks_port" ]]; then
+            info "sing-box ports: HTTP=$http_port, SOCKS=$socks_port ($cfg)"
+            echo "$http_port $socks_port"
+            return 0
+        fi
+        if [[ -n "$http_port" || -n "$socks_port" ]]; then
+            warn "sing-box has no matching HTTP and SOCKS inbounds; skipping auto setup: $cfg"
+        fi
     done
-    echo "$port"
+    return 1
 }
 
 check_port() {
@@ -186,14 +234,14 @@ auto_detect() {
     read -r cp csp <<< "$(detect_clash_ports)"
     local vp sp
     read -r vp sp <<< "$(detect_v2rayn_port)"
-    local sbp
-    sbp=$(detect_singbox_port)
+    local sbhp="" sbsp=""
+    read -r sbhp sbsp <<< "$(detect_singbox_ports || true)"
 
     local candidates=(
         "v2rayN:$vp:$sp"
         "Clash/Mihomo:$cp:$csp"
-        "sing-box:$sbp:$sbp"
     )
+    [[ -n "$sbhp" && -n "$sbsp" ]] && candidates+=("sing-box:$sbhp:$sbsp")
     local candidate name hp socks found
     for candidate in "${candidates[@]}"; do
         IFS=: read -r name hp socks <<< "$candidate"
@@ -210,10 +258,19 @@ auto_detect() {
     echo "$hp $socks"
 }
 
+is_valid_port() {
+    local value=$1 port
+    [[ "$value" =~ ^[0-9]{1,5}$ ]] || return 1
+    port=$((10#$value))
+    ((port >= 1 && port <= 65535))
+}
+
 # ─── 写入 ~/.zshrc ────────────────────────────────────────────
 
 build_proxy_block() {
     local hp=$1 sp=$2
+    local no_proxy_value
+    no_proxy_value=$(get_merged_no_proxy)
     local lines=("$PROXY_BLOCK_START")
     lines+=("export http_proxy=\"http://$HOST:$hp\"")
     lines+=("export https_proxy=\"http://$HOST:$hp\"")
@@ -221,8 +278,8 @@ build_proxy_block() {
     lines+=("export HTTP_PROXY=\"http://$HOST:$hp\"")
     lines+=("export HTTPS_PROXY=\"http://$HOST:$hp\"")
     lines+=("export ALL_PROXY=\"socks5://$HOST:$sp\"")
-    lines+=("export no_proxy=\"$NO_PROXY\"")
-    lines+=("export NO_PROXY=\"$NO_PROXY\"")
+    lines+=("export no_proxy=\"$no_proxy_value\"")
+    lines+=("export NO_PROXY=\"$no_proxy_value\"")
     [[ -n "$ANTHROPIC_BASE_URL" ]] && lines+=("export ANTHROPIC_BASE_URL=\"$ANTHROPIC_BASE_URL\"")
     lines+=("$PROXY_BLOCK_END")
     printf '%s\n' "${lines[@]}"
@@ -254,41 +311,65 @@ get_rc_file() {
     esac
 }
 
+preserve_file_mode() {
+    local source=$1 target=$2 mode
+    mode=$(stat -f '%Lp' "$source" 2>/dev/null || echo "")
+    [[ "$mode" =~ ^[0-7]{3,4}$ ]] || mode=$(stat -c '%a' "$source" 2>/dev/null || echo "")
+    [[ -n "$mode" ]] && chmod "$mode" "$target"
+}
+
 write_zshrc() {
     local hp=$1 sp=$2
     local rc
     rc=$(get_rc_file)
+    mkdir -p "$(dirname "$rc")" || { err "无法创建 rc 文件目录"; return 1; }
 
     local block
     block=$(build_proxy_block "$hp" "$sp")
 
     if [[ -f "$rc" ]]; then
         cp "$rc" "${rc}.proxy-bak" 2>/dev/null || true
-        local tmp
-        tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
-        chmod --reference="$rc" "$tmp" 2>/dev/null || chmod 644 "$tmp"
+        local tmp invalid=0
+        tmp=$(mktemp "${rc}.proxy.XXXXXX") || { err "创建临时文件失败"; return 1; }
+        preserve_file_mode "$rc" "$tmp"
         local in_block=0
-        while IFS= read -r line; do
+        while IFS= read -r line || [[ -n "$line" ]]; do
             if [[ "$line" == "$PROXY_BLOCK_START"* ]]; then
-                in_block=1; continue
+                if [[ $in_block -ne 0 ]]; then invalid=1; break; fi
+                in_block=1
+                continue
             fi
             if [[ "$line" == "$PROXY_BLOCK_END"* ]]; then
-                in_block=0; continue
+                if [[ $in_block -eq 0 ]]; then invalid=1; break; fi
+                in_block=0
+                continue
             fi
             [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
         done < "$rc"
+        if [[ $in_block -ne 0 || $invalid -ne 0 ]]; then
+            rm -f "$tmp"
+            err "代理配置标记未闭合或顺序异常，已停止写入以保护 $rc"
+            return 1
+        fi
         # 去除末尾多余空行，追加新块（避免多次运行积累空行）
         local tmp2
-        tmp2=$(mktemp) || { rm -f "$tmp"; err "创建临时文件失败"; return 1; }
-        awk 'NF{f=NR} {a[NR]=$0} END{for(i=1;i<=f;i++) print a[i]}' "$tmp" > "$tmp2" && mv "$tmp2" "$tmp"
-        printf '\n' >> "$tmp"
-        printf '%s\n' "$block" >> "$tmp"
-        mv "$tmp" "$rc"
+        tmp2=$(mktemp "${rc}.proxy-trim.XXXXXX") || { rm -f "$tmp"; err "创建临时文件失败"; return 1; }
+        if ! awk 'NF{f=NR} {a[NR]=$0} END{for(i=1;i<=f;i++) print a[i]}' "$tmp" > "$tmp2"; then
+            rm -f "$tmp" "$tmp2"
+            err "处理 $rc 失败"
+            return 1
+        fi
+        preserve_file_mode "$rc" "$tmp2"
+        mv "$tmp2" "$tmp" || { rm -f "$tmp" "$tmp2"; err "更新临时文件失败"; return 1; }
+        printf '\n' >> "$tmp" || { rm -f "$tmp"; err "写入临时文件失败"; return 1; }
+        printf '%s\n' "$block" >> "$tmp" || { rm -f "$tmp"; err "写入代理配置失败"; return 1; }
+        mv "$tmp" "$rc" || { rm -f "$tmp"; err "更新 $rc 失败"; return 1; }
         ok "已更新 $rc"
     else
-        printf '%s\n' "$block" > "$rc"
+        printf '%s\n' "$block" > "$rc" || { err "写入 $rc 失败"; return 1; }
         ok "已创建 $rc"
     fi
+    return 0
 }
 
 # ─── npm / git ────────────────────────────────────────────────
@@ -303,11 +384,11 @@ claude_geo_launcher_path() {
 
 install_claude_geo_launcher() {
     local hp=$1 sp=$2
-    local dir launcher rc body tmp in_block line
+    local dir launcher rc body tmp in_block invalid line
     dir="$(claude_geo_dir)"
     launcher="$(claude_geo_launcher_path)"
     rc="$(get_rc_file)"
-    mkdir -p "$dir"
+    mkdir -p "$dir" || { err "无法创建 $dir"; return 1; }
 
     body=""
     while IFS= read -r line; do
@@ -450,57 +531,255 @@ exec "$CLAUDE_COMMAND" "${CLAUDE_ARGS[@]}"
 CLAUDE_GEO_SCRIPT
     body="${body//__HTTP_PORT__/$hp}"
     body="${body//__SOCKS_PORT__/$sp}"
-    printf '%s\n' "$body" > "$launcher"
-    chmod +x "$launcher"
-    ok "已写入 Claude Code 画像启动器: $launcher"
-
-    tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
-    if [[ -f "$rc" ]]; then
-        in_block=0
-        while IFS= read -r line; do
-            if [[ "$line" == "$CLAUDE_GEO_BLOCK_START"* ]]; then in_block=1; continue; fi
-            if [[ "$line" == "$CLAUDE_GEO_BLOCK_END"* ]]; then in_block=0; continue; fi
-            [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
-        done < "$rc"
+    mkdir -p "$(dirname "$rc")" || { err "无法创建 rc 文件目录"; return 1; }
+    [[ -e "$rc" ]] || : > "$rc" || { err "无法创建 $rc"; return 1; }
+    tmp=$(mktemp "${rc}.claude-geo.XXXXXX") || { err "创建临时文件失败"; return 1; }
+    preserve_file_mode "$rc" "$tmp"
+    in_block=0
+    invalid=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == "$CLAUDE_GEO_BLOCK_START"* ]]; then
+            if [[ $in_block -ne 0 ]]; then invalid=1; break; fi
+            in_block=1
+            continue
+        fi
+        if [[ "$line" == "$CLAUDE_GEO_BLOCK_END"* ]]; then
+            if [[ $in_block -eq 0 ]]; then invalid=1; break; fi
+            in_block=0
+            continue
+        fi
+        [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
+    done < "$rc"
+    if [[ $in_block -ne 0 || $invalid -ne 0 ]]; then
+        rm -f "$tmp"
+        err "claude-geo 配置标记未闭合或顺序异常，已停止写入以保护 $rc"
+        return 1
     fi
+
     {
         printf '\n%s\n' "$CLAUDE_GEO_BLOCK_START"
         printf 'claude-geo() { "%s" "$@"; }\n' "$launcher"
         printf 'alias cgeo=claude-geo\n'
         printf '%s\n' "$CLAUDE_GEO_BLOCK_END"
-    } >> "$tmp"
-    mv "$tmp" "$rc"
+    } >> "$tmp" || { rm -f "$tmp"; err "写入 claude-geo 配置失败"; return 1; }
+
+    printf '%s\n' "$body" > "$launcher" || { rm -f "$tmp"; err "写入 $launcher 失败"; return 1; }
+    chmod +x "$launcher" || { rm -f "$tmp" "$launcher"; err "设置 $launcher 执行权限失败"; return 1; }
+    mv "$tmp" "$rc" || { rm -f "$tmp"; err "更新 $rc 失败"; return 1; }
+    ok "已写入 Claude Code 画像启动器: $launcher"
     ok "已安装 shell 命令: claude-geo (别名 cgeo)"
     info "以后从新终端运行 claude-geo，即可按当前代理出口自动匹配 TZ/LANG 后启动 Claude Code"
+    return 0
 }
 
 remove_claude_geo_launcher() {
-    local rc tmp in_block launcher
+    local rc tmp in_block invalid launcher
     rc="$(get_rc_file)"
     if [[ -f "$rc" ]]; then
-        tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
+        tmp=$(mktemp "${rc}.claude-geo-remove.XXXXXX") || { err "创建临时文件失败"; return 1; }
+        preserve_file_mode "$rc" "$tmp"
         in_block=0
-        while IFS= read -r line; do
-            if [[ "$line" == "$CLAUDE_GEO_BLOCK_START"* ]]; then in_block=1; continue; fi
-            if [[ "$line" == "$CLAUDE_GEO_BLOCK_END"* ]]; then in_block=0; continue; fi
+        invalid=0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" == "$CLAUDE_GEO_BLOCK_START"* ]]; then
+                if [[ $in_block -ne 0 ]]; then invalid=1; break; fi
+                in_block=1
+                continue
+            fi
+            if [[ "$line" == "$CLAUDE_GEO_BLOCK_END"* ]]; then
+                if [[ $in_block -eq 0 ]]; then invalid=1; break; fi
+                in_block=0
+                continue
+            fi
             [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
         done < "$rc"
-        mv "$tmp" "$rc"
+        if [[ $in_block -ne 0 || $invalid -ne 0 ]]; then
+            rm -f "$tmp"
+            err "claude-geo 配置标记未闭合或顺序异常，已停止清理以保护 $rc"
+            return 1
+        fi
+        mv "$tmp" "$rc" || { rm -f "$tmp"; err "更新 $rc 失败"; return 1; }
         ok "已从 $rc 移除 claude-geo 命令"
     fi
     launcher="$(claude_geo_launcher_path)"
     if [[ -f "$launcher" ]]; then
-        rm -f "$launcher"
+        rm -f "$launcher" || { err "删除 $launcher 失败"; return 1; }
         ok "已删除 $launcher"
     fi
+    return 0
+}
+
+proxy_state_file() {
+    printf '%s\n' "$HOME/.proxy-setup/proxy-config-state.v1"
+}
+
+state_encode() {
+    printf '%s' "$1" | base64 | tr -d '\r\n'
+}
+
+state_decode() {
+    [[ -n "${1:-}" ]] || return 0
+    printf '%s' "$1" | base64 -D 2>/dev/null || printf '%s' "$1" | base64 -d 2>/dev/null
+}
+
+state_has() {
+    local key=$1 file
+    file=$(proxy_state_file)
+    [[ -f "$file" ]] && grep -q "^${key}=" "$file"
+}
+
+state_get() {
+    local key=$1 file encoded
+    file=$(proxy_state_file)
+    [[ -f "$file" ]] || return 0
+    encoded=$(awk -F= -v key="$key" '$1 == key { print substr($0, length(key) + 2); exit }' "$file")
+    state_decode "$encoded"
+}
+
+state_set() {
+    local key=$1 value=${2-} file dir tmp
+    file=$(proxy_state_file)
+    dir=$(dirname "$file")
+    mkdir -p "$dir" || return 1
+    tmp=$(mktemp "$dir/.proxy-state.XXXXXX") || return 1
+    if [[ -f "$file" ]]; then
+        awk -F= -v key="$key" '$1 != key' "$file" > "$tmp"
+    fi
+    printf '%s=%s\n' "$key" "$(state_encode "$value")" >> "$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$file"
+}
+
+state_unset() {
+    local key=$1 file dir tmp
+    file=$(proxy_state_file)
+    [[ -f "$file" ]] || return 0
+    dir=$(dirname "$file")
+    tmp=$(mktemp "$dir/.proxy-state.XXXXXX") || return 1
+    awk -F= -v key="$key" '$1 != key' "$file" > "$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$file"
+}
+
+state_record_success() {
+    local name=$1 current=$2 applied_value=$3 original_key="$1.original" applied_key="$1.applied"
+    if ! state_has "$applied_key" || [[ "$(state_get "$applied_key")" != "$current" ]]; then
+        state_set "$original_key" "$current" || return 1
+    elif ! state_has "$original_key"; then
+        state_set "$original_key" "" || return 1
+    fi
+    state_set "$applied_key" "$applied_value" || return 1
+}
+
+normalize_proxy_value() {
+    case "${1:-}" in
+        ""|null|undefined) printf '%s' "" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+is_loopback_proxy() {
+    [[ "${1:-}" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]+)?(/|$) ]]
+}
+
+npm_proxy_value() {
+    normalize_proxy_value "$(npm config get "$1" 2>/dev/null || true)"
+}
+
+git_proxy_value() {
+    normalize_proxy_value "$(git config --global --get "$1" 2>/dev/null || true)"
+}
+
+pip_proxy_value() {
+    normalize_proxy_value "$("$1" config get global.proxy 2>/dev/null || true)"
+}
+
+restore_npm_proxy_value() {
+    local name=$1 key=$2 current applied original
+    current=$(npm_proxy_value "$key")
+    if state_has "$name.applied"; then
+        applied=$(state_get "$name.applied")
+        if [[ "$current" != "$applied" ]]; then warn "npm $key changed externally; keeping current value"; return 0; fi
+        original=$(state_get "$name.original")
+        if [[ -n "$original" ]]; then
+            npm config set "$key" "$original" 2>/dev/null || { warn "npm $key restore failed"; return 1; }
+        else
+            npm config delete "$key" 2>/dev/null || { warn "npm $key restore failed"; return 1; }
+        fi
+        state_unset "$name.original" && state_unset "$name.applied" || { warn "npm $key restored, but state cleanup failed"; return 1; }
+        ok "npm $key restored"
+    elif [[ -n "$current" ]] && is_loopback_proxy "$current"; then
+        npm config delete "$key" 2>/dev/null || { warn "npm $key legacy local proxy removal failed"; return 1; }
+        ok "npm $key removed from legacy local setup"
+    fi
+    return 0
+}
+
+restore_git_proxy_value() {
+    local name=$1 key=$2 current applied original
+    current=$(git_proxy_value "$key")
+    if state_has "$name.applied"; then
+        applied=$(state_get "$name.applied")
+        if [[ "$current" != "$applied" ]]; then warn "git $key changed externally; keeping current value"; return 0; fi
+        original=$(state_get "$name.original")
+        if [[ -n "$original" ]]; then
+            git config --global "$key" "$original" 2>/dev/null || { warn "git $key restore failed"; return 1; }
+        else
+            git config --global --unset "$key" 2>/dev/null || { warn "git $key restore failed"; return 1; }
+        fi
+        state_unset "$name.original" && state_unset "$name.applied" || { warn "git $key restored, but state cleanup failed"; return 1; }
+        ok "git $key restored"
+    elif [[ -n "$current" ]] && is_loopback_proxy "$current"; then
+        git config --global --unset "$key" 2>/dev/null || { warn "git $key legacy local proxy removal failed"; return 1; }
+        ok "git $key removed from legacy local setup"
+    fi
+    return 0
+}
+
+restore_pip_proxy_value() {
+    local pip_cmd=$1 current applied original
+    current=$(pip_proxy_value "$pip_cmd")
+    if state_has "pip_global_proxy.applied"; then
+        applied=$(state_get "pip_global_proxy.applied")
+        if [[ "$current" != "$applied" ]]; then warn "pip global.proxy changed externally; keeping current value"; return 0; fi
+        original=$(state_get "pip_global_proxy.original")
+        if [[ -n "$original" ]]; then
+            "$pip_cmd" config set global.proxy "$original" 2>/dev/null || { warn "pip global.proxy restore failed"; return 1; }
+        else
+            "$pip_cmd" config unset global.proxy 2>/dev/null || { warn "pip global.proxy restore failed"; return 1; }
+        fi
+        state_unset "pip_global_proxy.original" && state_unset "pip_global_proxy.applied" || { warn "pip global.proxy restored, but state cleanup failed"; return 1; }
+        ok "pip global.proxy restored"
+    elif [[ -n "$current" ]] && is_loopback_proxy "$current"; then
+        "$pip_cmd" config unset global.proxy 2>/dev/null || { warn "pip legacy local proxy removal failed"; return 1; }
+        ok "pip global.proxy removed from legacy local setup"
+    fi
+    return 0
 }
 
 configure_npm() {
     local hp=$1
     if command -v npm >/dev/null 2>&1; then
-        npm config set proxy "http://$HOST:$hp" 2>/dev/null
-        npm config set https-proxy "http://$HOST:$hp" 2>/dev/null
-        ok "npm 代理已设置: http://$HOST:$hp"
+        local proxy_url="http://$HOST:$hp" current ok_count=0
+        current=$(npm_proxy_value proxy)
+        if npm config set proxy "$proxy_url" 2>/dev/null; then
+            if state_record_success "npm_proxy" "$current" "$proxy_url"; then
+                ok_count=$((ok_count + 1))
+            else
+                if [[ -n "$current" ]]; then npm config set proxy "$current" 2>/dev/null; else npm config delete proxy 2>/dev/null; fi
+                warn "npm proxy 状态保存失败，已回滚"
+            fi
+        fi
+        current=$(npm_proxy_value https-proxy)
+        if npm config set https-proxy "$proxy_url" 2>/dev/null; then
+            if state_record_success "npm_https_proxy" "$current" "$proxy_url"; then
+                ok_count=$((ok_count + 1))
+            else
+                if [[ -n "$current" ]]; then npm config set https-proxy "$current" 2>/dev/null; else npm config delete https-proxy 2>/dev/null; fi
+                warn "npm https-proxy 状态保存失败，已回滚"
+            fi
+        fi
+        if [[ $ok_count -eq 2 ]]; then ok "npm 代理已设置: http://$HOST:$hp"; else warn "npm 代理配置未全部成功"; fi
     else
         warn "未找到 npm，跳过"
     fi
@@ -509,9 +788,26 @@ configure_npm() {
 configure_git() {
     local hp=$1
     if command -v git >/dev/null 2>&1; then
-        git config --global http.proxy "http://$HOST:$hp" 2>/dev/null
-        git config --global https.proxy "http://$HOST:$hp" 2>/dev/null
-        ok "git 代理已设置: http://$HOST:$hp"
+        local proxy_url="http://$HOST:$hp" current ok_count=0
+        current=$(git_proxy_value http.proxy)
+        if git config --global http.proxy "$proxy_url" 2>/dev/null; then
+            if state_record_success "git_http_proxy" "$current" "$proxy_url"; then
+                ok_count=$((ok_count + 1))
+            else
+                if [[ -n "$current" ]]; then git config --global http.proxy "$current" 2>/dev/null; else git config --global --unset http.proxy 2>/dev/null; fi
+                warn "git http.proxy 状态保存失败，已回滚"
+            fi
+        fi
+        current=$(git_proxy_value https.proxy)
+        if git config --global https.proxy "$proxy_url" 2>/dev/null; then
+            if state_record_success "git_https_proxy" "$current" "$proxy_url"; then
+                ok_count=$((ok_count + 1))
+            else
+                if [[ -n "$current" ]]; then git config --global https.proxy "$current" 2>/dev/null; else git config --global --unset https.proxy 2>/dev/null; fi
+                warn "git https.proxy 状态保存失败，已回滚"
+            fi
+        fi
+        if [[ $ok_count -eq 2 ]]; then ok "git 代理已设置: http://$HOST:$hp"; else warn "git 代理配置未全部成功"; fi
     else
         warn "未找到 git，跳过"
     fi
@@ -522,8 +818,18 @@ configure_pip() {
     local pip_cmd
     pip_cmd=$(command -v pip3 2>/dev/null || command -v pip 2>/dev/null || echo "")
     if [[ -n "$pip_cmd" ]]; then
-        "$pip_cmd" config set global.proxy "http://$HOST:$hp" 2>/dev/null
-        ok "pip 代理已设置: http://$HOST:$hp"
+        local proxy_url="http://$HOST:$hp" current
+        current=$(pip_proxy_value "$pip_cmd")
+        if "$pip_cmd" config set global.proxy "$proxy_url" 2>/dev/null; then
+            if state_record_success "pip_global_proxy" "$current" "$proxy_url"; then
+                ok "pip 代理已设置: http://$HOST:$hp"
+            else
+                if [[ -n "$current" ]]; then "$pip_cmd" config set global.proxy "$current" 2>/dev/null; else "$pip_cmd" config unset global.proxy 2>/dev/null; fi
+                warn "pip global.proxy 状态保存失败，已回滚"
+            fi
+        else
+            warn "pip 代理配置失败"
+        fi
     else
         warn "未找到 pip，跳过"
     fi
@@ -534,23 +840,49 @@ remove_all() {
     rc=$(get_rc_file)
 
     if [[ -f "$rc" ]]; then
-        local tmp; tmp=$(mktemp) || { err "创建临时文件失败"; return 1; }
-        chmod --reference="$rc" "$tmp" 2>/dev/null || chmod 644 "$tmp"
-        local in_block=0
-        while IFS= read -r line; do
-            if [[ "$line" == "$PROXY_BLOCK_START"* ]]; then in_block=1; continue; fi
-            if [[ "$line" == "$PROXY_BLOCK_END"* ]]; then in_block=0; continue; fi
+        local tmp; tmp=$(mktemp "${rc}.proxy-remove.XXXXXX") || { err "创建临时文件失败"; return 1; }
+        preserve_file_mode "$rc" "$tmp"
+        local in_block=0 invalid=0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" == "$PROXY_BLOCK_START"* ]]; then
+                if [[ $in_block -ne 0 ]]; then invalid=1; break; fi
+                in_block=1
+                continue
+            fi
+            if [[ "$line" == "$PROXY_BLOCK_END"* ]]; then
+                if [[ $in_block -eq 0 ]]; then invalid=1; break; fi
+                in_block=0
+                continue
+            fi
             [[ $in_block -eq 0 ]] && printf '%s\n' "$line" >> "$tmp"
         done < "$rc"
-        mv "$tmp" "$rc"
+        if [[ $in_block -ne 0 || $invalid -ne 0 ]]; then
+            rm -f "$tmp"
+            err "代理配置标记未闭合或顺序异常，已停止清理以保护 $rc"
+            return 1
+        fi
+        mv "$tmp" "$rc" || { rm -f "$tmp"; err "更新 $rc 失败"; return 1; }
         ok "已从 $rc 移除代理配置"
     fi
-    remove_claude_geo_launcher
-    command -v npm >/dev/null 2>&1 && { npm config delete proxy 2>/dev/null; npm config delete https-proxy 2>/dev/null; ok "npm 代理已清除"; }
-    command -v git >/dev/null 2>&1 && { git config --global --unset http.proxy 2>/dev/null || true; git config --global --unset https.proxy 2>/dev/null || true; ok "git 代理已清除"; }
+    remove_claude_geo_launcher || return 1
+    local restore_failed=0
+    if command -v npm >/dev/null 2>&1; then
+        restore_npm_proxy_value "npm_proxy" "proxy" || restore_failed=1
+        restore_npm_proxy_value "npm_https_proxy" "https-proxy" || restore_failed=1
+    fi
+    if command -v git >/dev/null 2>&1; then
+        restore_git_proxy_value "git_http_proxy" "http.proxy" || restore_failed=1
+        restore_git_proxy_value "git_https_proxy" "https.proxy" || restore_failed=1
+    fi
     local pip_cmd
     pip_cmd=$(command -v pip3 2>/dev/null || command -v pip 2>/dev/null || echo "")
-    [[ -n "$pip_cmd" ]] && { "$pip_cmd" config unset global.proxy 2>/dev/null || true; ok "pip 代理已清除"; }
+    if [[ -n "$pip_cmd" ]]; then restore_pip_proxy_value "$pip_cmd" || restore_failed=1; fi
+    if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+        clean_current_env
+    else
+        info "当前脚本不是通过 source 运行，无法修改父 shell 的现有环境变量；新终端不会再加载代理配置"
+    fi
+    [[ $restore_failed -eq 0 ]]
 }
 
 clean_current_env() {
@@ -738,14 +1070,16 @@ check_cf_trace_exit_ips() {
 
 set_env_current() {
     local hp=$1 sp=$2
+    local no_proxy_value
+    no_proxy_value=$(get_merged_no_proxy)
     export http_proxy="http://$HOST:$hp"
     export https_proxy="http://$HOST:$hp"
     export all_proxy="socks5://$HOST:$sp"
     export HTTP_PROXY="http://$HOST:$hp"
     export HTTPS_PROXY="http://$HOST:$hp"
     export ALL_PROXY="socks5://$HOST:$sp"
-    export no_proxy="$NO_PROXY"
-    export NO_PROXY="$NO_PROXY"
+    export no_proxy="$no_proxy_value"
+    export NO_PROXY="$no_proxy_value"
     [[ -n "$ANTHROPIC_BASE_URL" ]] && export ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL"
     ok "当前终端会话代理环境变量已设置"
 }
@@ -802,7 +1136,10 @@ main() {
             1)
                 read -r hp sp <<< "$(auto_detect)"
                 info "使用端口: HTTP=$hp, SOCKS5=$sp"
-                write_zshrc "$hp" "$sp"
+                if ! write_zshrc "$hp" "$sp"; then
+                    warn "代理配置文件写入失败，已停止后续配置"
+                    continue
+                fi
                 configure_npm "$hp"
                 configure_pip "$hp"
                 read -rp "  是否同时配置 git 代理？[y/N] " cfg_git
@@ -823,9 +1160,14 @@ main() {
             2)
                 read -rp "  输入 HTTP 代理端口 [默认 $DEFAULT_HTTP_PORT]: " h
                 hp=${h:-$DEFAULT_HTTP_PORT}
+                if ! is_valid_port "$hp"; then warn "HTTP 端口必须是 1-65535 之间的整数"; continue; fi
                 read -rp "  输入 SOCKS5 代理端口 [默认 $hp]: " s
                 sp=${s:-$hp}
-                write_zshrc "$hp" "$sp"
+                if ! is_valid_port "$sp"; then warn "SOCKS5 端口必须是 1-65535 之间的整数"; continue; fi
+                if ! write_zshrc "$hp" "$sp"; then
+                    warn "代理配置文件写入失败，已停止后续配置"
+                    continue
+                fi
                 configure_npm "$hp"
                 configure_pip "$hp"
                 read -rp "  是否同时配置 git 代理？[y/N] " cfg_git
@@ -842,8 +1184,11 @@ main() {
                 info "如需安装 Claude Code 画像一致启动器，请在主菜单选择 9"
                 ;;
             3)
-                remove_all
-                bold "=== 代理配置已全部清除 ==="
+                if remove_all; then
+                    bold "=== 代理配置已全部清除 ==="
+                else
+                    warn "代理配置未能全部清除，请根据上方错误处理后重试"
+                fi
                 ;;
             4)
                 read -r hp _ <<< "$(auto_detect)"
@@ -876,7 +1221,9 @@ main() {
             9)
                 read -r hp sp <<< "$(auto_detect)"
                 info "使用端口: HTTP=$hp, SOCKS5=$sp"
-                install_claude_geo_launcher "$hp" "$sp"
+                if ! install_claude_geo_launcher "$hp" "$sp"; then
+                    warn "claude-geo 安装失败"
+                fi
                 ;;
             0)
                 echo "退出"

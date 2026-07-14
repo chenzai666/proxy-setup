@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import json
+import base64
 import ipaddress
 import subprocess
 import shutil
@@ -38,6 +39,7 @@ CF_TRACE_TARGETS = [
 
 PROXY_BLOCK_START = "# >>> proxy-config start <<<"
 PROXY_BLOCK_END   = "# >>> proxy-config end <<<"
+PROXY_STATE_FILE_NAME = "proxy-config-state.v1"
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MAC      = platform.system() == "Darwin"
@@ -223,25 +225,33 @@ def detect_singbox_port() -> tuple:
                 try:
                     data = json.loads(content)
                     inbounds = data.get("inbounds", [])
+                    http_port = None
+                    socks_port = None
                     for ib in inbounds:
                         port = ib.get("listen_port") or ib.get("port")
-                        proto = ib.get("protocol", "")
-                        if port:
-                            if proto in ("http", "mixed") or "http" in str(ib.get("tag","")):
-                                return int(port), int(port)
-                            elif proto in ("socks",):
-                                return int(port) - 1, int(port)
+                        inbound_type = str(ib.get("type") or ib.get("protocol") or "").lower()
+                        if not port:
+                            continue
+                        port = int(port)
+                        if inbound_type == "mixed":
+                            info(f"检测到 sing-box 混合端口: {port}  ({cfg})")
+                            return port, port
+                        if inbound_type == "http":
+                            http_port = port
+                        elif inbound_type == "socks":
+                            socks_port = port
+                    if http_port and socks_port:
+                        info(f"检测到 sing-box 端口: HTTP={http_port}, SOCKS={socks_port}  ({cfg})")
+                        return http_port, socks_port
+                    if http_port or socks_port:
+                        warn(f"sing-box 配置未同时提供 HTTP 和 SOCKS 入站，跳过自动配置: {cfg}")
+                        return None
                 except json.JSONDecodeError:
                     pass
                 # 尝试 YAML 风格正则
-                m = re.search(r'"listen_port"\s*:\s*(\d+)', content)
-                if m:
-                    port = int(m.group(1))
-                    info(f"检测到 sing-box 端口: {port}")
-                    return port, port
             except Exception:
                 pass
-    return DEFAULT_HTTP_PORT, DEFAULT_SOCKS5_PORT
+    return None
 
 
 def auto_detect_ports() -> tuple:
@@ -253,20 +263,20 @@ def auto_detect_ports() -> tuple:
         candidates = [
             ("v2rayN",) + detect_v2rayn_port(),
             ("Clash/Mihomo",) + detect_clash_ports(),
-            ("sing-box",) + detect_singbox_port(),
         ]
     elif IS_WINDOWS:
         candidates = [
             ("v2rayN",) + detect_v2rayn_port(),
             ("Clash",) + detect_clash_ports(),
-            ("sing-box",) + detect_singbox_port(),
         ]
     else:
         candidates = [
             ("v2rayN",) + detect_v2rayn_port(),
             ("Clash",) + detect_clash_ports(),
-            ("sing-box",) + detect_singbox_port(),
         ]
+    singbox_ports = detect_singbox_port()
+    if singbox_ports:
+        candidates.append(("sing-box",) + singbox_ports)
 
     # 优先返回正在监听的端口
     for name, hp, sp in candidates:
@@ -429,6 +439,46 @@ def get_cmd_bat_path() -> Path:
     return Path.home() / ".proxy_init.cmd"
 
 
+def _read_registry_value(key_path: str, value_name: str) -> tuple[bool, str]:
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
+            value, _ = winreg.QueryValueEx(key, value_name)
+            return True, str(value)
+    except (FileNotFoundError, OSError):
+        return False, ""
+
+
+def _set_registry_value(key_path: str, value_name: str, value: str) -> bool:
+    try:
+        import winreg
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, value)
+        return True
+    except OSError:
+        return False
+
+
+def _delete_registry_value(key_path: str, value_name: str) -> bool:
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, value_name)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
+CMD_PROCESSOR_KEY = r"Software\Microsoft\Command Processor"
+CMD_AUTORUN_BACKUP_KEY = r"Software\proxy-setup"
+
+
+def _cmd_autorun_is_managed(value: str, bat: Path) -> bool:
+    return str(bat).lower() in value.lower()
+
+
 def setup_cmd_autorun(http_port: int, socks5_port: int):
     """Windows CMD: 写入批处理文件 + 注册表 AutoRun"""
     bat = get_cmd_bat_path()
@@ -453,48 +503,147 @@ set NO_PROXY={NO_PROXY}
     bat.write_text(bat_content, encoding="ascii")
     ok(f"已写入 CMD 批处理: {bat}")
 
-    # 设置注册表 AutoRun
-    try:
-        subprocess.run(
-            ["reg", "add", r"HKCU\Software\Microsoft\Command Processor",
-             "/v", "AutoRun", "/t", "REG_SZ",
-             "/d", str(bat), "/f"],
-            capture_output=True, check=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-        )
-        ok("CMD AutoRun 注册表已设置")
-    except subprocess.CalledProcessError as e:
-        warn(f"CMD AutoRun 注册表设置失败（可能需要管理员权限）: {e}")
+    current_exists, current_value = _read_registry_value(CMD_PROCESSOR_KEY, "AutoRun")
+    backup_exists, backup_state = _read_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupState")
+    if not backup_exists or (current_exists and not _cmd_autorun_is_managed(current_value, bat)):
+        if current_exists and not _cmd_autorun_is_managed(current_value, bat):
+            _set_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupState", "present")
+            _set_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupValue", current_value)
+        else:
+            # Legacy versions may already have overwritten AutoRun, so no original command remains.
+            _set_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupState", "absent")
+
+    if current_exists and _cmd_autorun_is_managed(current_value, bat):
+        ok("CMD AutoRun 已包含代理初始化脚本")
+        return
+
+    launcher = f'call "{bat}"'
+    autorun_value = f"{current_value} & {launcher}" if current_exists and current_value.strip() else launcher
+    if _set_registry_value(CMD_PROCESSOR_KEY, "AutoRun", autorun_value):
+        ok("CMD AutoRun 注册表已设置，并保留原有命令")
+    else:
+        warn("CMD AutoRun 注册表设置失败")
 
 
 def remove_cmd_autorun():
     """清除 Windows CMD AutoRun 配置"""
     bat = get_cmd_bat_path()
+    current_exists, current_value = _read_registry_value(CMD_PROCESSOR_KEY, "AutoRun")
+    backup_exists, backup_state = _read_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupState")
+    _, backup_value = _read_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupValue")
+
+    if current_exists and _cmd_autorun_is_managed(current_value, bat):
+        restored = (
+            _set_registry_value(CMD_PROCESSOR_KEY, "AutoRun", backup_value)
+            if backup_state == "present"
+            else _delete_registry_value(CMD_PROCESSOR_KEY, "AutoRun")
+        )
+        if restored:
+            ok("CMD AutoRun 注册表已恢复原有命令" if backup_state == "present" else "CMD AutoRun 已移除代理初始化命令")
+            _delete_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupState")
+            _delete_registry_value(CMD_AUTORUN_BACKUP_KEY, "CmdAutoRunBackupValue")
+        else:
+            warn("CMD AutoRun 注册表恢复失败")
+    elif backup_exists:
+        warn("CMD AutoRun 已被其他程序修改，保留当前值且未覆盖")
+
     if bat.exists():
         bat.unlink()
         ok(f"已删除 {bat}")
 
+
+def get_proxy_state_path() -> Path:
+    return Path.home() / ".proxy-setup" / PROXY_STATE_FILE_NAME
+
+
+def load_proxy_state() -> dict[str, str]:
+    path = get_proxy_state_path()
+    state = {}
+    if not path.exists():
+        return state
     try:
-        subprocess.run(
-            ["reg", "add", r"HKCU\Software\Microsoft\Command Processor",
-             "/v", "AutoRun", "/t", "REG_SZ",
-             "/d", "", "/f"],
-            capture_output=True, check=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-        )
-        ok("CMD AutoRun 注册表已清除")
-    except subprocess.CalledProcessError:
-        # 尝试删除整个值
-        try:
-            subprocess.run(
-                ["reg", "delete", r"HKCU\Software\Microsoft\Command Processor",
-                 "/v", "AutoRun", "/f"],
-                capture_output=True, check=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            ok("CMD AutoRun 注册表已删除")
-        except subprocess.CalledProcessError:
-            pass
+        for line in path.read_text(encoding="utf-8").splitlines():
+            key, encoded = line.split("=", 1)
+            if re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+                state[key] = base64.b64decode(encoded.encode("ascii")).decode("utf-8") if encoded else ""
+    except (OSError, ValueError, UnicodeDecodeError, base64.binascii.Error):
+        warn(f"代理状态文件无法读取，保留现有工具代理: {path}")
+        return {}
+    return state
+
+
+def save_proxy_state(state: dict[str, str]):
+    path = get_proxy_state_path()
+    if not state:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = "".join(
+        f"{key}={base64.b64encode(value.encode('utf-8')).decode('ascii')}\n"
+        for key, value in sorted(state.items())
+    )
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    if not IS_WINDOWS:
+        os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+
+def _normalize_proxy_value(value: str) -> str:
+    value = (value or "").strip()
+    return "" if value.lower() in ("", "null", "undefined") else value
+
+
+def get_tool_proxy_value(command: str, args: list[str], creationflags: int = 0) -> str:
+    try:
+        result = subprocess.run([command, *args], capture_output=True, text=True, creationflags=creationflags)
+    except OSError:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return _normalize_proxy_value(result.stdout.splitlines()[0] if result.stdout else "")
+
+
+def run_tool_config(command: str, args: list[str], creationflags: int = 0) -> bool:
+    try:
+        return subprocess.run([command, *args], capture_output=True, creationflags=creationflags).returncode == 0
+    except OSError:
+        return False
+
+
+def record_managed_proxy_success(
+    state: dict[str, str], name: str, current_value: str, applied_value: str
+):
+    original_key = f"{name}.original"
+    applied_key = f"{name}.applied"
+    if applied_key not in state or state[applied_key] != current_value:
+        state[original_key] = current_value
+    elif original_key not in state:
+        state[original_key] = ""
+    state[applied_key] = applied_value
+
+
+def is_loopback_proxy(value: str) -> bool:
+    return bool(re.match(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?(/|$)", value, re.IGNORECASE))
+
+
+def restore_managed_proxy_setting(state, name, current_value, set_value, clear_value, label):
+    original_key = f"{name}.original"
+    applied_key = f"{name}.applied"
+    if applied_key in state:
+        if current_value != state[applied_key]:
+            warn(f"{label} 已被其他配置修改，保留当前值")
+            return
+        original = state.get(original_key, "")
+        if (set_value(original) if original else clear_value()):
+            state.pop(original_key, None)
+            state.pop(applied_key, None)
+            ok(f"{label} 已恢复")
+        else:
+            warn(f"{label} 恢复失败")
+    elif current_value and is_loopback_proxy(current_value):
+        if clear_value():
+            ok(f"{label} 已清除旧版本地代理配置")
 
 
 def remove_proxy(rc_file: Path):
@@ -515,36 +664,47 @@ def remove_proxy(rc_file: Path):
     if IS_WINDOWS:
         remove_cmd_autorun()
 
-    # 清除 npm
+    state = load_proxy_state()
+    cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+
+    # 清除或恢复 npm
     npm = shutil.which("npm") or (shutil.which("npm.cmd") if IS_WINDOWS else None)
     if npm:
-        try:
-            subprocess.run([npm, "config", "delete", "proxy"], capture_output=True)
-            subprocess.run([npm, "config", "delete", "https-proxy"], capture_output=True)
-            ok("npm 代理已清除")
-        except Exception:
-            pass
+        restore_managed_proxy_setting(
+            state, "npm_proxy", get_tool_proxy_value(npm, ["config", "get", "proxy"], cf),
+            lambda value: run_tool_config(npm, ["config", "set", "proxy", value], cf),
+            lambda: run_tool_config(npm, ["config", "delete", "proxy"], cf), "npm proxy",
+        )
+        restore_managed_proxy_setting(
+            state, "npm_https_proxy", get_tool_proxy_value(npm, ["config", "get", "https-proxy"], cf),
+            lambda value: run_tool_config(npm, ["config", "set", "https-proxy", value], cf),
+            lambda: run_tool_config(npm, ["config", "delete", "https-proxy"], cf), "npm https-proxy",
+        )
 
-    # 清除 git
+    # 清除或恢复 git
     git = shutil.which("git") or (shutil.which("git.exe") if IS_WINDOWS else None)
     if git:
-        try:
-            subprocess.run([git, "config", "--global", "--unset", "http.proxy"], capture_output=True)
-            subprocess.run([git, "config", "--global", "--unset", "https.proxy"], capture_output=True)
-            ok("git 代理已清除")
-        except Exception:
-            pass
+        restore_managed_proxy_setting(
+            state, "git_http_proxy", get_tool_proxy_value(git, ["config", "--global", "--get", "http.proxy"], cf),
+            lambda value: run_tool_config(git, ["config", "--global", "http.proxy", value], cf),
+            lambda: run_tool_config(git, ["config", "--global", "--unset", "http.proxy"], cf), "git http.proxy",
+        )
+        restore_managed_proxy_setting(
+            state, "git_https_proxy", get_tool_proxy_value(git, ["config", "--global", "--get", "https.proxy"], cf),
+            lambda value: run_tool_config(git, ["config", "--global", "https.proxy", value], cf),
+            lambda: run_tool_config(git, ["config", "--global", "--unset", "https.proxy"], cf), "git https.proxy",
+        )
 
-    # 清除 pip
-    cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    # 清除或恢复 pip
     pip = (shutil.which("pip3") or shutil.which("pip") or
            (shutil.which("pip3.exe") or shutil.which("pip.exe") if IS_WINDOWS else None))
     if pip:
-        try:
-            subprocess.run([pip, "config", "unset", "global.proxy"], capture_output=True, creationflags=cf)
-            ok("pip 代理已清除")
-        except Exception:
-            pass
+        restore_managed_proxy_setting(
+            state, "pip_global_proxy", get_tool_proxy_value(pip, ["config", "get", "global.proxy"], cf),
+            lambda value: run_tool_config(pip, ["config", "set", "global.proxy", value], cf),
+            lambda: run_tool_config(pip, ["config", "unset", "global.proxy"], cf), "pip global.proxy",
+        )
+    save_proxy_state(state)
 
 
 # ─── npm / git 配置 ─────────────────────────────────────────────────
@@ -555,12 +715,22 @@ def configure_npm(http_port: int):
         warn("未找到 npm，跳过 npm 代理配置")
         return
     proxy_url = f"http://{HOST}:{http_port}"
-    try:
-        subprocess.run([npm, "config", "set", "proxy", proxy_url], check=True, capture_output=True)
-        subprocess.run([npm, "config", "set", "https-proxy", proxy_url], check=True, capture_output=True)
+    cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    state = load_proxy_state()
+    current_proxy = get_tool_proxy_value(npm, ["config", "get", "proxy"], cf)
+    first_ok = run_tool_config(npm, ["config", "set", "proxy", proxy_url], cf)
+    if first_ok:
+        record_managed_proxy_success(state, "npm_proxy", current_proxy, proxy_url)
+    current_https = get_tool_proxy_value(npm, ["config", "get", "https-proxy"], cf)
+    second_ok = run_tool_config(npm, ["config", "set", "https-proxy", proxy_url], cf)
+    if second_ok:
+        record_managed_proxy_success(state, "npm_https_proxy", current_https, proxy_url)
+    if first_ok or second_ok:
+        save_proxy_state(state)
+    if first_ok and second_ok:
         ok(f"npm 代理已设置: {proxy_url}")
-    except subprocess.CalledProcessError as e:
-        warn(f"npm 代理配置失败: {e}")
+    else:
+        warn("npm 代理配置失败")
 
 
 def configure_git(http_port: int):
@@ -569,12 +739,22 @@ def configure_git(http_port: int):
         warn("未找到 git，跳过 git 代理配置")
         return
     proxy_url = f"http://{HOST}:{http_port}"
-    try:
-        subprocess.run([git, "config", "--global", "http.proxy", proxy_url], check=True, capture_output=True)
-        subprocess.run([git, "config", "--global", "https.proxy", proxy_url], check=True, capture_output=True)
+    cf = subprocess.CREATE_NO_WINDOW if IS_WINDOWS and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    state = load_proxy_state()
+    current_http = get_tool_proxy_value(git, ["config", "--global", "--get", "http.proxy"], cf)
+    first_ok = run_tool_config(git, ["config", "--global", "http.proxy", proxy_url], cf)
+    if first_ok:
+        record_managed_proxy_success(state, "git_http_proxy", current_http, proxy_url)
+    current_https = get_tool_proxy_value(git, ["config", "--global", "--get", "https.proxy"], cf)
+    second_ok = run_tool_config(git, ["config", "--global", "https.proxy", proxy_url], cf)
+    if second_ok:
+        record_managed_proxy_success(state, "git_https_proxy", current_https, proxy_url)
+    if first_ok or second_ok:
+        save_proxy_state(state)
+    if first_ok and second_ok:
         ok(f"git 代理已设置: {proxy_url}")
-    except subprocess.CalledProcessError as e:
-        warn(f"git 代理配置失败: {e}")
+    else:
+        warn("git 代理配置失败")
 
 
 def configure_pip(http_port: int):
@@ -585,12 +765,14 @@ def configure_pip(http_port: int):
         warn("未找到 pip，跳过 pip 代理配置")
         return
     proxy_url = f"http://{HOST}:{http_port}"
-    try:
-        subprocess.run([pip, "config", "set", "global.proxy", proxy_url],
-                       check=True, capture_output=True, creationflags=cf)
+    state = load_proxy_state()
+    current_proxy = get_tool_proxy_value(pip, ["config", "get", "global.proxy"], cf)
+    if run_tool_config(pip, ["config", "set", "global.proxy", proxy_url], cf):
+        record_managed_proxy_success(state, "pip_global_proxy", current_proxy, proxy_url)
+        save_proxy_state(state)
         ok(f"pip 代理已设置: {proxy_url}")
-    except subprocess.CalledProcessError as e:
-        warn(f"pip 代理配置失败: {e}")
+    else:
+        warn("pip 代理配置失败")
 
 
 # ─── 验证 ────────────────────────────────────────────────────────────
@@ -1476,8 +1658,10 @@ def main():
                 http_port = int(h) if h else default_http
                 s = input(f"  输入 SOCKS5 代理端口 [默认 {http_port}]: ").strip()
                 socks5_port = int(s) if s else http_port
+                if not 1 <= http_port <= 65535 or not 1 <= socks5_port <= 65535:
+                    raise ValueError
             except ValueError:
-                err("端口必须是数字")
+                err("端口必须是 1-65535 之间的整数")
                 continue
 
             write_rc_file(rc_file, http_port, socks5_port)

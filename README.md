@@ -138,6 +138,8 @@ bash setup_proxy.sh
 每个客户端的默认 HTTP 端口上下各扫 **±10 个端口**，确保在非默认端口运行时也能正确识别。
 如果没有检测到任何监听端口，脚本会按优先级使用第一个候选默认值，也就是 v2rayN 的 `10808/10808`；Clash/Mihomo 自身的默认候选仍是 `7897/7897`。
 
+sing-box 自动检测只接受 `mixed` 入站，或同时存在的 `http` 与 `socks` 入站；不会再把第一个 `listen_port` 或相邻端口猜作另一种协议。只有单一协议入站时，请使用手动配置并确认 HTTP 和 SOCKS5 端口。
+
 ### 代理配置项
 
 脚本配置的代理范围包括：
@@ -146,6 +148,10 @@ bash setup_proxy.sh
 - `pip` 全局代理（`~/.config/pip/pip.conf` / `%APPDATA%\pip\pip.ini`）
 
 脚本默认不写 Windows 用户级环境变量。Claude Code 如需继承这些代理变量，请从已经加载 profile 的 PowerShell/CMD 窗口启动。
+
+写入 shell 配置和当前会话时，脚本会保留已有的 `NO_PROXY` / `no_proxy` 条目，并补充 `localhost`、`127.0.0.1`、`::1`；合并时会忽略大小写去重，不再覆盖公司内网等自定义直连域名。
+
+首次配置 `npm`、`git`、`pip` 全局代理时，脚本会在 `~/.proxy-setup/proxy-config-state.v1` 保存原值。执行“移除代理配置”时，只有当前值仍是本脚本写入的本地代理才会恢复原值；若之后被其他工具修改，则保留该值。没有该状态文件的旧版本配置仅会清理 `127.0.0.1` / `localhost` 本地代理，不会删除外部代理。
 
 ### Claude / OpenAI 出口 IP 检测
 
@@ -205,7 +211,7 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy
 菜单支持：
 - **1/2/3** — 逐项独立开关
 - **4) 一键禁用推荐项** — 关闭前两项，保留组播（兼顾安全与内网便利）
-- **5) 全部恢复默认** — 删除所有策略键，恢复系统默认
+- **5) 全部恢复** — PowerShell 版从 `~/.proxy-setup/smart-dns-state.json` 恢复脚本修改前的值；若值已被其他程序修改或没有备份，则保留当前值。Python 版目前删除对应策略值并恢复系统默认
 - **6) 检测 DNS 泄漏** — 输出分项风险画像：检查 Windows DNS 策略、系统 DNS 服务器、直连公网 DNS、CDN 解析辅助对比和代理域名访问能力
 
 > 需要**管理员权限**。
@@ -461,3 +467,86 @@ cgeo
 ```
 
 注意：`TZ` 对 Node/Claude Code 的时区通常有效；语言会按出口 IP 注入到 `LANG`、`LC_ALL`、`LANGUAGE`、`ACCEPT_LANGUAGE`。语言变量对 macOS/Linux 更容易影响运行时 locale；Windows 上 Node/Bun 的默认 `Intl` locale 往往来自系统区域设置，`LANG/LC_ALL` 不一定能把 `Intl.DateTimeFormat().resolvedOptions().locale` 改掉。如需完全改变这一项，需要修改 Windows 用户区域设置，这会影响整个用户账户，脚本不会默认执行。
+
+## 切换为台湾时区（TW）
+
+台湾使用 IANA 时区名 `Asia/Taipei`（UTC+8，当前不使用夏令时）；Windows 的对应时区 ID 是 `Taipei Standard Time`。下面的“系统时区”命令会影响整台电脑的时间显示和所有应用，执行前请确认这是预期行为。
+
+### Windows
+
+以**管理员身份**打开 PowerShell，先查看当前时区，再设置为台湾并验证：
+
+```powershell
+# 查看当前 Windows 时区
+Get-TimeZone
+
+# 设置系统时区为台湾
+Set-TimeZone -Id "Taipei Standard Time"
+
+# 验证时区和当前时间
+Get-TimeZone
+Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
+```
+
+如果使用 CMD，或系统缺少 `Set-TimeZone` 命令，可使用等价的 `tzutil`：
+
+```bat
+:: 查询当前系统时区
+tzutil /g
+
+:: 设置系统时区为台湾
+tzutil /s "Taipei Standard Time"
+
+:: 再次查询确认
+tzutil /g
+```
+
+只想让新启动的 Claude Code 使用台湾时区、不修改 Windows 系统时区时，在 PowerShell 中运行：
+
+```powershell
+$env:TZ = "Asia/Taipei"
+claude
+
+# 验证 Node/Claude Code 运行时将使用的时区（如已安装 Node.js）
+node -e "console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)"
+```
+
+如需让当前用户后续新开的终端默认带上该变量，可运行以下命令；设置后关闭并重新打开终端。它只影响支持 `TZ` 的应用，不会修改 Windows 系统时区：
+
+```powershell
+[Environment]::SetEnvironmentVariable("TZ", "Asia/Taipei", "User")
+```
+
+### macOS
+
+在“终端”中执行。`sudo` 会要求输入当前账户密码；`systemsetup` 会修改整个 macOS 系统的时区：
+
+```bash
+# 查看当前系统时区
+sudo systemsetup -gettimezone
+
+# 设置系统时区为台湾
+sudo systemsetup -settimezone Asia/Taipei
+
+# 验证时区和当前时间
+sudo systemsetup -gettimezone
+date '+%Y-%m-%d %H:%M:%S %Z (%z)'
+```
+
+只想让单次 Claude Code 会话使用台湾时区、不修改 macOS 系统时区时：
+
+```bash
+TZ=Asia/Taipei claude
+
+# 验证 Node/Claude Code 运行时将使用的时区（如已安装 Node.js）
+TZ=Asia/Taipei node -e 'console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)'
+```
+
+如需让 zsh 的后续新终端默认使用台湾时区，请写入 `~/.zshrc` 后重新打开终端：
+
+```bash
+printf '\n# 台湾时区\nexport TZ=Asia/Taipei\n' >> ~/.zshrc
+source ~/.zshrc
+```
+
+恢复为按代理出口自动匹配的时区时，不要设置全局 `TZ`；使用本项目安装的 `claude-geo` 启动 Claude Code 即可。若此前写入过 `TZ`，Windows 可执行 `[Environment]::SetEnvironmentVariable("TZ", $null, "User")`，macOS 则从 `~/.zshrc` 删除 `export TZ=Asia/Taipei` 后重新打开终端。

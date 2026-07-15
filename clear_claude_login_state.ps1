@@ -47,11 +47,21 @@ function Resolve-FullPath {
 function Test-PathInsideUserProfile {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    $fullPath = Resolve-FullPath $Path
-    $root = (Resolve-FullPath $UserProfile).TrimEnd('\')
+    return Test-PathInsideRoot -Path $Path -Root $UserProfile
+}
 
-    return ($fullPath -eq $root) -or
-        $fullPath.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)
+function Test-PathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+
+    $fullPath = Resolve-FullPath $Path
+    $rootPath = (Resolve-FullPath $Root).TrimEnd('\')
+
+    return ($fullPath -eq $rootPath) -or
+        $fullPath.StartsWith($rootPath + '\', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Add-Target {
@@ -87,12 +97,99 @@ function Remove-Target {
     }
 
     if (-not (Test-Path -LiteralPath $Path)) {
-        return
+        return $true
     }
 
     if ($PSCmdlet.ShouldProcess($Path, 'Remove recursively')) {
-        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Continue
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Warning "Could not completely remove '$Path': $($_.Exception.Message)"
+        }
+
+        if (Test-Path -LiteralPath $Path) {
+            Write-Warning "Still present after cleanup: $Path"
+            return $false
+        }
+
         Write-Host "Removed: $Path"
+    }
+
+    return $true
+}
+
+function Test-ProcessInsideTargets {
+    param(
+        [Parameter(Mandatory = $true)]$Process,
+
+        [Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$Targets
+    )
+
+    $processPath = [string]$Process.ExecutablePath
+    if ([string]::IsNullOrWhiteSpace($processPath)) {
+        return $false
+    }
+
+    foreach ($targetPath in $Targets) {
+        if (Test-PathInsideRoot -Path $processPath -Root $targetPath) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-TargetDataProcesses {
+    param([Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$Targets)
+
+    if ($Targets.Count -eq 0) {
+        return @()
+    }
+
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { Test-ProcessInsideTargets -Process $_ -Targets $Targets }
+    )
+}
+
+function Stop-CleanupProcesses {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$ClaudeProcesses,
+
+        [Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$Targets
+    )
+
+    $stoppedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+    $candidates = @($ClaudeProcesses)
+
+    # MSIX Claude can leave ChromeNativeHost running from its per-user data folder.
+    # Re-scan after stopping known Claude processes so it cannot keep data files locked.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $candidates += @(Get-TargetDataProcesses -Targets $Targets)
+        $stoppedAny = $false
+
+        foreach ($process in $candidates) {
+            $processId = [int]$process.ProcessId
+            if (-not $stoppedProcessIds.Add($processId)) {
+                continue
+            }
+
+            try {
+                if ($PSCmdlet.ShouldProcess("PID $processId", 'Stop Claude cleanup process')) {
+                    Stop-Process -Id $processId -Force -ErrorAction Stop
+                    $stoppedAny = $true
+                }
+            } catch {
+                Write-Warning "Could not stop PID ${processId}: $($_.Exception.Message)"
+            }
+        }
+
+        if (-not $stoppedAny) {
+            break
+        }
+
+        Start-Sleep -Seconds 1
+        $candidates = @()
     }
 }
 
@@ -285,22 +382,20 @@ if ($Target -eq 'Code') {
 
 Write-Host "Stopping Claude processes..."
 
-foreach ($process in $claudeProcesses) {
-    try {
-        if ($PSCmdlet.ShouldProcess("PID $($process.ProcessId)", "Stop Claude $Target process")) {
-            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-        }
-    } catch {
-        Write-Warning "Could not stop PID $($process.ProcessId): $($_.Exception.Message)"
-    }
-}
-
-Start-Sleep -Seconds 2
+Stop-CleanupProcesses -ClaudeProcesses $claudeProcesses -Targets $targets
 
 Write-Host "Removing Claude $Target login/session data..."
 
+$failedTargets = [System.Collections.Generic.List[string]]::new()
 foreach ($targetPath in $targets) {
-    Remove-Target -Path $targetPath
+    if (-not (Remove-Target -Path $targetPath)) {
+        $failedTargets.Add($targetPath) | Out-Null
+    }
+}
+
+if ($failedTargets.Count -gt 0) {
+    Write-Error "Cleanup was incomplete. Close the remaining Claude-related processes and run the script again. Remaining paths: $($failedTargets -join '; ')"
+    exit 1
 }
 
 Write-Host ''

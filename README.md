@@ -372,6 +372,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.p
 
 如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在选择桌面端时加 `-IncludeBrowserIndexedDb`。
 
+脚本会在删除前结束 Claude 及其数据目录内仍在运行的辅助进程（包括商店版的 ChromeNativeHost）。若仍有文件被其他进程占用，脚本会明确提示未清理的路径并以失败状态结束，不会误报清理完成；关闭占用进程后重新执行即可。
+
 ### macOS
 
 本地执行：

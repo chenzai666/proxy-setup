@@ -241,6 +241,8 @@ https://github.com/chenzai666/proxy-setup
 
 ## Claude Code 安装
 
+Windows、macOS、Linux 安装脚本都会先检测现有的 `claude` 可执行文件并运行 `claude --version`。如果检测成功，脚本直接输出已安装版本并结束，不再下载或重复运行安装器；设置 `CLAUDE_CODE_SKIP_INSTALL=1` 时仍按原行为跳过安装并修复命令或 PATH。
+
 ### Windows
 
 ```powershell

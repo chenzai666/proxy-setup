@@ -225,7 +225,7 @@ collect_candidates() {
     shopt -u nullglob
 }
 
-find_claude_binary() {
+find_existing_claude_binary() {
     collect_candidates
 
     local candidate
@@ -236,6 +236,17 @@ find_claude_binary() {
         fi
     done
 
+    return 1
+}
+
+find_claude_binary() {
+    local existing
+    if existing="$(find_existing_claude_binary)"; then
+        printf '%s\n' "$existing"
+        return 0
+    fi
+
+    collect_candidates
     err "Could not find a working Claude Code executable."
     err "Tried:"
     for candidate in "${CANDIDATES[@]}"; do
@@ -310,6 +321,15 @@ main() {
     fi
 
     require_macos
+    if [[ "$SKIP_INSTALL" != "1" && "$SKIP_INSTALL" != "true" ]]; then
+        local existing version
+        if existing="$(find_existing_claude_binary)"; then
+            version="$("$existing" --version 2>&1)"
+            ok "Claude Code is already installed. Version: $version"
+            return
+        fi
+    fi
+
     configure_proxy
     run_installer
 

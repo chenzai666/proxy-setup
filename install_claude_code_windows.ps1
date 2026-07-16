@@ -296,7 +296,7 @@ function Test-ClaudeCandidate {
     }
 }
 
-function Find-ClaudeCommand {
+function Find-ExistingClaudeCommand {
     Sync-ProcessPath
     $candidates = Get-ClaudeCandidates
     foreach ($candidate in $candidates) {
@@ -304,6 +304,15 @@ function Find-ClaudeCommand {
             return $candidate
         }
     }
+
+    return $null
+}
+
+function Find-ClaudeCommand {
+    $existing = Find-ExistingClaudeCommand
+    if ($existing) { return $existing }
+
+    $candidates = Get-ClaudeCandidates
 
     Fail 'Could not find a working Claude Code executable.'
     if ($candidates.Count -gt 0) {
@@ -386,6 +395,15 @@ function Main {
     Require-Windows
 
     $skip = $SkipInstall.IsPresent -or (Test-Truthy $env:CLAUDE_CODE_SKIP_INSTALL)
+    if (-not $skip) {
+        $existing = Find-ExistingClaudeCommand
+        if ($existing) {
+            $existingVersion = Get-ClaudeVersion $existing
+            Ok "Claude Code is already installed. Version: $existingVersion"
+            return
+        }
+    }
+
     Show-ProxyNote
 
     if ($skip) {

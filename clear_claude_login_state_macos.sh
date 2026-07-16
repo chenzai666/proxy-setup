@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Clear Claude Desktop or Claude Code login/session state and cache for the
+# Clear Claude Desktop or Claude Code login state and cache for the
 # current macOS user. If no target is provided, the script asks which one to
 # clean.
+# Claude Code mode preserves projects, conversations, settings, and extensions.
 # This does not uninstall Claude.app.
 #
 # Usage:
@@ -34,7 +35,7 @@ Usage:
 
 Targets:
   desktop   Clear only Claude Desktop app login state and cache.
-  code      Clear only Claude Code CLI login state and cache.
+  code      Clear only Claude Code credentials and cache; preserve conversations.
 
 Environment:
   TARGET=desktop|code
@@ -100,6 +101,54 @@ remove_path() {
       say "Warning: could not remove $full_path (check permissions)"
     fi
   fi
+}
+
+backup_claude_code_user_data() {
+  local code_config_dir="$1"
+  local backup_root="$home_dir/.claude-cleanup-backups"
+  local stamp destination source relative parent copied=0
+  local protected_names=(
+    projects sessions backups commands agents skills plugins
+    history.jsonl settings.json settings.local.json config.json CLAUDE.md
+  )
+
+  stamp="$(date '+%Y%m%d-%H%M%S')"
+  destination="$backup_root/$stamp"
+  if [ -e "$destination" ]; then
+    destination="$backup_root/$stamp-$$"
+  fi
+
+  for relative in "${protected_names[@]}"; do
+    [ -e "$code_config_dir/$relative" ] || [ -L "$code_config_dir/$relative" ] || continue
+    copied=1
+  done
+  if [ -e "$home_dir/.claude.json" ] || [ -L "$home_dir/.claude.json" ]; then
+    copied=1
+  fi
+
+  if [ "$copied" -eq 0 ]; then
+    say "No Claude Code project history or user configuration needed backup."
+    return 0
+  fi
+
+  if [ "$dry_run" = "1" ]; then
+    say "Would back up protected Claude Code data to: $destination"
+    return 0
+  fi
+
+  mkdir -p "$destination/.claude"
+  chmod 700 "$backup_root" "$destination" "$destination/.claude" 2>/dev/null || true
+  for relative in "${protected_names[@]}"; do
+    source="$code_config_dir/$relative"
+    [ -e "$source" ] || [ -L "$source" ] || continue
+    parent="$(dirname "$destination/.claude/$relative")"
+    mkdir -p "$parent"
+    cp -pR "$source" "$destination/.claude/$relative"
+  done
+  if [ -e "$home_dir/.claude.json" ] || [ -L "$home_dir/.claude.json" ]; then
+    cp -pR "$home_dir/.claude.json" "$destination/.claude.json"
+  fi
+  say "Backup created: $destination"
 }
 
 normalize_path() {
@@ -247,16 +296,32 @@ if [ "$target" = "desktop" ]; then
 fi
 
 if [ "$target" = "code" ]; then
+  if ! code_config_dir="$(normalize_path "${CLAUDE_CONFIG_DIR:-$home_dir/.claude}")"; then
+    code_config_dir=""
+  fi
+  case "$code_config_dir" in
+    "$home_dir"/*) ;;
+    *)
+      say "Unsafe CLAUDE_CONFIG_DIR was rejected; file cleanup will be skipped: ${CLAUDE_CONFIG_DIR:-$home_dir/.claude}"
+      code_config_dir=""
+      ;;
+  esac
   say "Stopping Claude Code..."
   if [ "$dry_run" = "1" ]; then
-    say "Would run: pkill -f claude"
+    say "Would run: pkill -x claude"
+    say "Would stop @anthropic-ai/claude-code processes"
   else
-    pkill -f 'claude' >/dev/null 2>&1 || true
+    pkill -x claude >/dev/null 2>&1 || true
+    pkill -f '@anthropic-ai/claude-code' >/dev/null 2>&1 || true
   fi
 
-  say "Removing Claude Code config, credentials, and cache..."
-  remove_path "${CLAUDE_CONFIG_DIR:-$home_dir/.claude}"
-  remove_path "$home_dir/.claude.json"
+  if [ -n "$code_config_dir" ]; then
+    backup_claude_code_user_data "$code_config_dir"
+    say "Preserving Claude Code projects, conversations, settings, extensions, and .claude.json."
+    say "Removing Claude Code credentials and cache..."
+    remove_path "$code_config_dir/.credentials.json"
+    remove_path "$code_config_dir/cache"
+  fi
 
   keychain_services=(
     "Claude Code-credentials"
@@ -297,6 +362,12 @@ if [ "$target" = "desktop" ] && [ "$include_browser_site_data" = "1" ]; then
   done < <(find "$home_dir/Library/Application Support/Firefox/Profiles" -maxdepth 1 -type d 2>/dev/null)
 
   say "Browser cookies are best removed from the browser UI by deleting site data for claude.ai."
+fi
+
+if [ "$dry_run" = "1" ]; then
+  say ""
+  say "Preview complete. No files or credentials were removed."
+  exit 0
 fi
 
 say ""

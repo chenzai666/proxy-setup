@@ -335,7 +335,9 @@ bash install_claude_code_linux.sh
 清理范围：
 
 - Claude Desktop：只清 Claude 桌面端 Electron 应用数据、缓存、偏好和保存状态。
-- Claude Code：只清 Claude Code CLI 的本地配置、凭据和缓存。macOS 会额外尝试清理 Claude Code 的 Keychain 凭据。
+- Claude Code：只清理 `~/.claude/.credentials.json`、`~/.claude/cache` 和登录凭据；macOS 会额外尝试清理 Claude Code 的 Keychain 凭据。不会删除 `~/.claude`、`~/.claude.json`、`projects`、对话历史、设置、commands、agents、skills 或 plugins。
+
+执行 Claude Code 清理前，脚本会把现有的项目会话、历史、设置和扩展配置自动备份到 `~/.claude-cleanup-backups/时间戳/`。备份不包含 `.credentials.json`，避免在登出后继续保存可用令牌；清理失败或误操作时，可从该目录恢复受保护数据。
 
 浏览器/PWA 的 `claude.ai` 站点存储不会默认清理；需要时再额外启用浏览器清理选项。
 

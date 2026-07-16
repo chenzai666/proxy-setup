@@ -6,7 +6,8 @@ Clears Claude Desktop or Claude Code login/session state for a Windows user.
 When -Target is not supplied, the script asks whether to clean Claude Desktop
 or Claude Code. Desktop mode removes only per-user Claude Desktop/Electron app
 data such as cookies, local storage, IndexedDB, cache, and Crashpad state. Code
-mode removes only Claude Code CLI state such as .claude and .claude.json.
+mode removes only Claude Code credentials and explicit cache data. It preserves
+projects, conversation history, settings, extensions, and .claude.json.
 
 It does not uninstall Claude and does not delete files outside the selected
 Windows user profile.
@@ -118,6 +119,66 @@ function Remove-Target {
     return $true
 }
 
+function Backup-ClaudeCodeUserData {
+    param([Parameter(Mandatory = $true)][string]$CodeConfigDir)
+
+    $protectedNames = @(
+        'projects',
+        'sessions',
+        'backups',
+        'commands',
+        'agents',
+        'skills',
+        'plugins',
+        'history.jsonl',
+        'settings.json',
+        'settings.local.json',
+        'config.json',
+        'CLAUDE.md'
+    )
+    $sources = [System.Collections.Generic.List[object]]::new()
+    foreach ($name in $protectedNames) {
+        $source = Join-Path $CodeConfigDir $name
+        if (Test-Path -LiteralPath $source) {
+            $sources.Add([pscustomobject]@{ Source = $source; Relative = Join-Path '.claude' $name }) | Out-Null
+        }
+    }
+
+    $rootConfig = Join-Path $UserProfile '.claude.json'
+    if (Test-Path -LiteralPath $rootConfig) {
+        $sources.Add([pscustomobject]@{ Source = $rootConfig; Relative = '.claude.json' }) | Out-Null
+    }
+
+    if ($sources.Count -eq 0) {
+        Write-Host 'No Claude Code project history or user configuration needed backup.'
+        return $null
+    }
+
+    $backupRoot = Join-Path $UserProfile '.claude-cleanup-backups'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $destination = Join-Path $backupRoot $stamp
+    if (Test-Path -LiteralPath $destination) {
+        $destination = Join-Path $backupRoot ("$stamp-$([guid]::NewGuid().ToString('N').Substring(0, 8))")
+    }
+
+    if ($PSCmdlet.ShouldProcess($destination, 'Back up protected Claude Code data before credential cleanup')) {
+        New-Item -ItemType Directory -Path $destination -Force | Out-Null
+        foreach ($item in $sources) {
+            $target = Join-Path $destination $item.Relative
+            $parent = Split-Path -Parent $target
+            if (-not (Test-Path -LiteralPath $parent)) {
+                New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $item.Source -Destination $target -Recurse -Force -ErrorAction Stop
+        }
+        Write-Host "Backup created: $destination"
+    } else {
+        Write-Host "Would back up protected Claude Code data to: $destination"
+    }
+
+    return $destination
+}
+
 function Test-ProcessInsideTargets {
     param(
         [Parameter(Mandatory = $true)]$Process,
@@ -140,7 +201,7 @@ function Test-ProcessInsideTargets {
 }
 
 function Get-TargetDataProcesses {
-    param([Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$Targets)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Targets)
 
     if ($Targets.Count -eq 0) {
         return @()
@@ -156,7 +217,7 @@ function Stop-CleanupProcesses {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$ClaudeProcesses,
 
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$Targets
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Targets
     )
 
     $stoppedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -257,6 +318,7 @@ if (-not (Test-Path -LiteralPath $UserProfile)) {
 
 $UserProfile = Resolve-FullPath $UserProfile
 $targets = [System.Collections.Generic.List[string]]::new()
+$codeConfigDir = $null
 
 if ($IncludeClaudeCli) {
     if ($PSBoundParameters.ContainsKey('Target') -and -not [string]::IsNullOrWhiteSpace($Target) -and $Target -ne 'Code') {
@@ -376,15 +438,30 @@ if ($Target -eq 'Code') {
         Join-Path $UserProfile '.claude'
     }
 
-    Add-Target -Targets $targets -Path $codeConfigDir
-    Add-Target -Targets $targets -Path (Join-Path $UserProfile '.claude.json')
+    $codeConfigDir = Resolve-FullPath $codeConfigDir
+    if (-not (Test-PathInsideUserProfile $codeConfigDir) -or $codeConfigDir -eq $UserProfile) {
+        Write-Warning "Unsafe CLAUDE_CONFIG_DIR was rejected; file cleanup will be skipped: $codeConfigDir"
+        $codeConfigDir = $null
+    } else {
+        Add-Target -Targets $targets -Path (Join-Path $codeConfigDir '.credentials.json')
+        Add-Target -Targets $targets -Path (Join-Path $codeConfigDir 'cache')
+    }
 }
 
 Write-Host "Stopping Claude processes..."
 
 Stop-CleanupProcesses -ClaudeProcesses $claudeProcesses -Targets $targets
 
-Write-Host "Removing Claude $Target login/session data..."
+if ($Target -eq 'Code' -and $codeConfigDir) {
+    Backup-ClaudeCodeUserData -CodeConfigDir $codeConfigDir | Out-Null
+    Write-Host 'Preserving Claude Code projects, conversations, settings, extensions, and .claude.json.'
+}
+
+if ($Target -eq 'Code') {
+    Write-Host 'Removing Claude Code login credentials and cache...'
+} else {
+    Write-Host 'Removing Claude Desktop local app data and cache...'
+}
 
 $failedTargets = [System.Collections.Generic.List[string]]::new()
 foreach ($targetPath in $targets) {
@@ -396,6 +473,12 @@ foreach ($targetPath in $targets) {
 if ($failedTargets.Count -gt 0) {
     Write-Error "Cleanup was incomplete. Close the remaining Claude-related processes and run the script again. Remaining paths: $($failedTargets -join '; ')"
     exit 1
+}
+
+if ($WhatIfPreference) {
+    Write-Host ''
+    Write-Host 'Preview complete. No files or credentials were removed.'
+    exit 0
 }
 
 Write-Host ''

@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Clear Claude Desktop or Claude Code login state and cache for the
-# current macOS user. If no target is provided, the script asks which one to
-# clean.
+# current macOS user. If no target is provided, the script asks whether to
+# clean or migrate a previous Claude Code backup after signing in to a new
+# account.
 # Claude Code mode preserves projects, conversations, settings, and extensions.
 # This does not uninstall Claude.app.
 #
@@ -12,11 +13,15 @@ set -euo pipefail
 #   DRY_RUN=1 bash clear_claude_login_state_macos.sh
 #   TARGET=code bash clear_claude_login_state_macos.sh
 #   bash clear_claude_login_state_macos.sh --target code
+#   bash clear_claude_login_state_macos.sh --target migrate --yes
 
 dry_run="${DRY_RUN:-0}"
 target="${TARGET:-}"
 include_claude_cli="${INCLUDE_CLAUDE_CLI:-0}"
 include_browser_site_data="${INCLUDE_BROWSER_SITE_DATA:-0}"
+migration_source="${MIGRATION_SOURCE:-}"
+assume_yes="${ASSUME_YES:-0}"
+allow_logged_out="${ALLOW_LOGGED_OUT:-0}"
 
 home_dir="${HOME:?HOME is not set}"
 home_dir="$(cd "$home_dir" 2>/dev/null && pwd -P)" || {
@@ -31,15 +36,19 @@ say() {
 usage() {
   cat <<'EOF'
 Usage:
-  bash clear_claude_login_state_macos.sh [--target desktop|code] [--dry-run]
+  bash clear_claude_login_state_macos.sh [--target desktop|code|migrate] [options]
 
 Targets:
   desktop   Clear only Claude Desktop app login state and cache.
   code      Clear only Claude Code credentials and cache; preserve conversations.
+  migrate   Merge a previous Claude Code cleanup backup into the currently signed-in account.
 
 Environment:
   TARGET=desktop|code
   DRY_RUN=1
+  MIGRATION_SOURCE=PATH           Old .claude directory or cleanup backup directory.
+  ASSUME_YES=1                    Skip migration confirmation.
+  ALLOW_LOGGED_OUT=1              Permit migration without a detected current login.
   INCLUDE_BROWSER_SITE_DATA=1   Only applies to target=desktop.
   INCLUDE_CLAUDE_CLI=1          Deprecated alias for target=code.
 EOF
@@ -48,11 +57,12 @@ EOF
 select_target() {
   while true; do
     say ""
-    say "Select cleanup target:"
+    say "Select Claude operation:"
     say "  1) Claude Desktop only"
-    say "  2) Claude Code only"
+    say "  2) Clear Claude Code login state and cache"
+    say "  3) Migrate old Claude Code data into the current new account"
     say ""
-    printf 'Enter 1 or 2: '
+    printf 'Enter 1, 2, or 3: '
     IFS= read -r choice
 
     case "$choice" in
@@ -64,8 +74,12 @@ select_target() {
         target="code"
         return
         ;;
+      3|migrate|Migrate|migration|m|M)
+        target="migrate"
+        return
+        ;;
       *)
-        say "Invalid choice. Please enter 1 or 2."
+        say "Invalid choice. Please enter 1, 2, or 3."
         ;;
     esac
   done
@@ -109,6 +123,7 @@ backup_claude_code_user_data() {
   local stamp destination source relative parent copied=0
   local protected_names=(
     projects sessions backups commands agents skills plugins
+    session-env shell-snapshots todos plans
     history.jsonl settings.json settings.local.json config.json CLAUDE.md
   )
 
@@ -151,6 +166,39 @@ backup_claude_code_user_data() {
   say "Backup created: $destination"
 }
 
+remove_claude_code_root_account_metadata() {
+  local root_config="$home_dir/.claude.json" temporary
+  [ -f "$root_config" ] || return 0
+  if [ "$dry_run" = "1" ]; then
+    say "Would remove account-specific fields from: $root_config"
+    return 0
+  fi
+  if ! command -v osascript >/dev/null 2>&1; then
+    say "Warning: osascript is unavailable; could not remove account-specific fields from .claude.json."
+    return 1
+  fi
+  temporary="$root_config.cleanup-$$-$RANDOM.tmp"
+  if osascript -l JavaScript - "$root_config" "$temporary" <<'JXA'
+ObjC.import('Foundation');
+function run(argv) {
+  const text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, null);
+  const config = JSON.parse(ObjC.unwrap(text));
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Root config is not a JSON object');
+  ['oauthAccount', 'userID', 'machineID'].forEach(function (key) { delete config[key]; });
+  const output = $(JSON.stringify(config, null, 2) + '\n');
+  if (!output.writeToFileAtomicallyEncodingError(argv[1], true, $.NSUTF8StringEncoding, null)) throw new Error('Failed to write cleaned JSON');
+}
+JXA
+  then
+    mv "$temporary" "$root_config"
+    say "Removed account-specific fields from .claude.json while preserving project and user settings."
+    return 0
+  fi
+  rm -f "$temporary"
+  say "Warning: could not remove account-specific fields from .claude.json."
+  return 1
+}
+
 normalize_path() {
   local path="$1"
   local dir base
@@ -179,6 +227,256 @@ normalize_path() {
   (cd "$dir" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$base")
 }
 
+get_claude_code_config_dir() {
+  local config_dir
+  config_dir="$(normalize_path "${CLAUDE_CONFIG_DIR:-$home_dir/.claude}")" || return 1
+  case "$config_dir" in
+    "$home_dir"/*) ;;
+    *) return 1 ;;
+  esac
+  [ "$config_dir" != "$home_dir" ] || return 1
+  printf '%s\n' "$config_dir"
+}
+
+migration_path_mtime() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    stat -f '%m' "$1" 2>/dev/null || printf '0\n'
+  else
+    stat -c '%Y' "$1" 2>/dev/null || printf '0\n'
+  fi
+}
+
+find_latest_claude_code_cleanup_backup() {
+  local backup_root="$home_dir/.claude-cleanup-backups" candidate latest="" latest_time=0 current_time
+  [ -d "$backup_root" ] || return 1
+  shopt -s nullglob
+  local candidates=("$backup_root"/*)
+  shopt -u nullglob
+  for candidate in "${candidates[@]}"; do
+    [ -d "$candidate/.claude" ] || continue
+    current_time="$(migration_path_mtime "$candidate")"
+    if [ "$current_time" -gt "$latest_time" ]; then
+      latest="$candidate"
+      latest_time="$current_time"
+    fi
+  done
+  [ -n "$latest" ] || return 1
+  printf '%s\n' "$latest"
+}
+
+migration_file_count() {
+  if [ -d "$1" ]; then
+    find "$1" -type f 2>/dev/null | wc -l | tr -d ' '
+  else
+    printf '0\n'
+  fi
+}
+
+merge_migration_directory_no_clobber() {
+  local source_dir="$1" target_dir="$2"
+  [ -d "$source_dir" ] || return 0
+  mkdir -p "$target_dir"
+  cp -pRn "$source_dir/." "$target_dir/"
+}
+
+merge_migration_history() {
+  local source_file="$1" target_file="$2" temporary
+  [ -f "$source_file" ] || return 0
+  if [ ! -f "$target_file" ]; then
+    cp -p "$source_file" "$target_file"
+    return 0
+  fi
+  temporary="$target_file.migration-$$-$RANDOM.tmp"
+  awk 'NF && !seen[$0]++ { print }' "$target_file" "$source_file" > "$temporary"
+  mv "$temporary" "$target_file"
+}
+
+migrate_claude_code_data() {
+  local source_input="$migration_source" source_path source_config="" source_root_json="" source_parent
+  local destination rollback_root candidate_root merge_dirs copy_if_missing_files name has_importable=0
+  local current_login_found=0 source_project_files destination_project_files destination_parent destination_name
+  local stage root_stage timestamp rollback_dir destination_root_json root_merge_ready=0 stage_project_files imported_project_files
+  local destination_moved=0 destination_installed=0 root_moved=0 root_installed=0 answer
+
+  destination="$(get_claude_code_config_dir)" || {
+    say "Unsafe CLAUDE_CONFIG_DIR was rejected; migration skipped: ${CLAUDE_CONFIG_DIR:-$home_dir/.claude}"
+    return 1
+  }
+  rollback_root="$(normalize_path "$home_dir/.claude-migration-backups")" || {
+    say "Could not resolve migration rollback directory."
+    return 1
+  }
+  case "$rollback_root" in "$home_dir"/*) ;; *) say "Migration rollback directory must be inside HOME."; return 1 ;; esac
+  [ "$rollback_root" != "$destination" ] || { say "Migration rollback directory cannot equal the Claude Code directory."; return 1; }
+  case "$rollback_root/" in "$destination"/*) say "Migration rollback directory cannot be inside the Claude Code directory."; return 1 ;; esac
+  case "$destination/" in "$rollback_root"/*) say "Claude Code directory cannot be inside the migration rollback directory."; return 1 ;; esac
+
+  if [ -z "$source_input" ]; then
+    source_input="$(find_latest_claude_code_cleanup_backup)" || {
+      say "No Claude Code cleanup backup was found. Use --source to choose an old .claude or backup directory."
+      return 1
+    }
+    say "Using latest cleanup backup: $source_input"
+  fi
+  source_path="$(normalize_path "$source_input")" || { say "Migration source does not exist: $source_input"; return 1; }
+  if [ -d "$source_path/.claude" ]; then
+    source_config="$(normalize_path "$source_path/.claude")"
+    [ -f "$source_path/.claude.json" ] && source_root_json="$source_path/.claude.json"
+  elif [ "$(basename "$source_path")" = ".claude" ] || [ -d "$source_path/projects" ] || [ -f "$source_path/history.jsonl" ]; then
+    source_config="$source_path"
+    source_parent="$(dirname "$source_path")"
+    [ -f "$source_parent/.claude.json" ] && source_root_json="$source_parent/.claude.json"
+  else
+    say "Migration source has no recognizable Claude Code data: $source_path"
+    return 1
+  fi
+  [ "$source_config" != "$destination" ] || { say "Migration source cannot be the current Claude Code directory."; return 1; }
+  case "$source_config/" in "$destination"/*) say "Migration source cannot be inside the current Claude Code directory."; return 1 ;; esac
+
+  merge_dirs=(projects sessions commands agents skills plugins backups session-env shell-snapshots todos plans)
+  copy_if_missing_files=(settings.json settings.local.json config.json CLAUDE.md)
+  for name in "${merge_dirs[@]}" "${copy_if_missing_files[@]}" history.jsonl; do
+    [ -e "$source_config/$name" ] && has_importable=1
+  done
+  [ "$has_importable" -eq 1 ] || { say "Migration source contains no supported Claude Code work data."; return 1; }
+
+  if [ -f "$destination/.credentials.json" ] || [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] || [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    current_login_found=1
+  elif command -v security >/dev/null 2>&1; then
+    for name in "Claude Code-credentials" "Claude Code OAuth" "claude-code"; do
+      if security find-generic-password -s "$name" >/dev/null 2>&1; then current_login_found=1; break; fi
+    done
+  fi
+  source_project_files="$(migration_file_count "$source_config/projects")"
+  destination_project_files="$(migration_file_count "$destination/projects")"
+  say ""
+  say "Claude Code data migration plan"
+  say "  Source: $source_config"
+  say "  Current account: $destination"
+  say "  Rollback backup: $rollback_root"
+  say "  Source project files: $source_project_files"
+  say "  Current project files: $destination_project_files"
+  say "  Current login: $([ "$current_login_found" -eq 1 ] && printf 'detected and preserved' || printf 'not detected')"
+  say "Source credentials, cache, telemetry, oauthAccount, userID, and machineID are never imported."
+  say "Current-account files win on conflict; old data fills only missing files."
+  if [ "$current_login_found" -ne 1 ] && [ "$allow_logged_out" != "1" ]; then
+    say "No current-account login was detected. Sign in first or explicitly use --allow-logged-out."
+    return 1
+  fi
+  if [ "$dry_run" = "1" ]; then
+    say "Migration preview complete. No process was stopped and no file was modified."
+    return 0
+  fi
+  if [ "$assume_yes" != "1" ]; then
+    printf 'Migrate old local data into the current account? [y/N] '
+    IFS= read -r answer
+    case "$answer" in y|Y|yes|YES) ;; *) say "Migration cancelled."; return 0 ;; esac
+  fi
+
+  say "Stopping Claude Code..."
+  pkill -x claude >/dev/null 2>&1 || true
+  pkill -f '@anthropic-ai/claude-code' >/dev/null 2>&1 || true
+  destination_parent="$(dirname "$destination")"
+  destination_name="$(basename "$destination")"
+  mkdir -p "$destination_parent" "$rollback_root"
+  chmod 700 "$rollback_root" 2>/dev/null || true
+  stage="$destination_parent/.${destination_name}.migration-stage.$$-$RANDOM"
+  root_stage="$destination_parent/.claude-root-migration-stage.$$-$RANDOM.json"
+  timestamp="$(date '+%Y%m%d-%H%M%S')"
+  rollback_dir="$rollback_root/$timestamp"
+  [ ! -e "$rollback_dir" ] || rollback_dir="$rollback_root/$timestamp-$$-$RANDOM"
+  mkdir -p "$stage"
+  chmod 700 "$stage" 2>/dev/null || true
+
+  cleanup_migration_temps() { rm -rf "$stage" 2>/dev/null || true; rm -f "$root_stage" 2>/dev/null || true; }
+  rollback_failed_migration() {
+    say "Migration commit failed; restoring the current account data."
+    [ "$destination_installed" -eq 0 ] || rm -rf "$destination"
+    [ "$destination_moved" -eq 0 ] || [ ! -d "$rollback_dir/current-claude" ] || mv "$rollback_dir/current-claude" "$destination"
+    [ "$root_installed" -eq 0 ] || rm -f "$destination_root_json"
+    [ "$root_moved" -eq 0 ] || [ ! -f "$rollback_dir/current-claude.json" ] || mv "$rollback_dir/current-claude.json" "$destination_root_json"
+    return 1
+  }
+  trap cleanup_migration_temps EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  if [ -d "$destination" ]; then cp -pR "$destination/." "$stage/"; fi
+  for name in "${merge_dirs[@]}"; do merge_migration_directory_no_clobber "$source_config/$name" "$stage/$name"; done
+  for name in "${copy_if_missing_files[@]}"; do
+    [ -f "$source_config/$name" ] && [ ! -e "$stage/$name" ] && cp -p "$source_config/$name" "$stage/$name"
+  done
+  merge_migration_history "$source_config/history.jsonl" "$stage/history.jsonl"
+
+  destination_root_json="$home_dir/.claude.json"
+  if [ -n "$source_root_json" ] && command -v osascript >/dev/null 2>&1; then
+    if osascript -l JavaScript - "$source_root_json" "$destination_root_json" "$root_stage" <<'JXA'
+ObjC.import('Foundation');
+function readJson(path) {
+  const fm = $.NSFileManager.defaultManager;
+  if (!fm.fileExistsAtPath(path)) return {};
+  const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
+  return JSON.parse(ObjC.unwrap(text));
+}
+function mergeMap(source, destination, key) {
+  const sourceMap = source[key];
+  if (!sourceMap || typeof sourceMap !== 'object' || Array.isArray(sourceMap)) return;
+  if (!destination[key] || typeof destination[key] !== 'object' || Array.isArray(destination[key])) destination[key] = {};
+  Object.keys(sourceMap).forEach(function (name) {
+    if (!(name in destination[key])) destination[key][name] = sourceMap[name];
+    else if (sourceMap[name] && destination[key][name] && typeof sourceMap[name] === 'object' && typeof destination[key][name] === 'object' && !Array.isArray(sourceMap[name]) && !Array.isArray(destination[key][name])) destination[key][name] = Object.assign({}, sourceMap[name], destination[key][name]);
+  });
+}
+function run(argv) {
+  const source = readJson(argv[0]);
+  const destination = readJson(argv[1]);
+  mergeMap(source, destination, 'projects');
+  mergeMap(source, destination, 'mcpServers');
+  const output = $(JSON.stringify(destination, null, 2) + '\n');
+  if (!output.writeToFileAtomicallyEncodingError(argv[2], true, $.NSUTF8StringEncoding, null)) throw new Error('Failed to write merged JSON');
+}
+JXA
+    then
+      chmod 600 "$root_stage" 2>/dev/null || true
+      root_merge_ready=1
+    else
+      say "Warning: .claude.json project registry merge was skipped."
+      rm -f "$root_stage"
+    fi
+  elif [ -n "$source_root_json" ]; then
+    say "Warning: osascript is unavailable; .claude.json project registry merge was skipped."
+  fi
+
+  stage_project_files="$(migration_file_count "$stage/projects")"
+  imported_project_files=$((stage_project_files - destination_project_files))
+  [ "$imported_project_files" -ge 0 ] || imported_project_files=0
+  mkdir -p "$rollback_dir"
+  chmod 700 "$rollback_dir" 2>/dev/null || true
+  if [ -d "$destination" ]; then mv "$destination" "$rollback_dir/current-claude" || rollback_failed_migration || return 1; destination_moved=1; fi
+  mv "$stage" "$destination" || { rollback_failed_migration; return 1; }
+  destination_installed=1
+  if [ "$root_merge_ready" -eq 1 ]; then
+    if [ -f "$destination_root_json" ]; then mv "$destination_root_json" "$rollback_dir/current-claude.json" || { rollback_failed_migration; return 1; }; root_moved=1; fi
+    mv "$root_stage" "$destination_root_json" || { rollback_failed_migration; return 1; }
+    root_installed=1
+  fi
+  if ! cat > "$rollback_dir/MIGRATION_INFO.txt" <<EOF
+Migration time: $(date '+%Y-%m-%d %H:%M:%S')
+Source: $source_config
+Current-account rollback: $rollback_dir
+Imported project files: $imported_project_files
+EOF
+  then
+    say "Warning: migration succeeded, but the rollback note could not be written."
+  else
+    chmod 600 "$rollback_dir/MIGRATION_INFO.txt" 2>/dev/null || true
+  fi
+  trap - EXIT INT TERM
+  cleanup_migration_temps
+  say "Migration complete. Imported project files: $imported_project_files"
+  say "Rollback snapshot: $rollback_dir"
+}
+
 if [ "$include_claude_cli" = "1" ]; then
   target="code"
   say "INCLUDE_CLAUDE_CLI=1 is deprecated; using TARGET=code."
@@ -200,6 +498,26 @@ while [ "$#" -gt 0 ]; do
       ;;
     --code|--claude-code)
       target="code"
+      shift
+      ;;
+    --migrate|--migrate-code-data)
+      target="migrate"
+      shift
+      ;;
+    --source)
+      if [ "$#" -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      migration_source="$2"
+      shift 2
+      ;;
+    --yes|-y)
+      assume_yes="1"
+      shift
+      ;;
+    --allow-logged-out)
+      allow_logged_out="1"
       shift
       ;;
     --dry-run)
@@ -228,6 +546,9 @@ else
     code|Code|claude-code|ClaudeCode|c|C|2)
       target="code"
       ;;
+    migrate|Migrate|migration|m|M|3)
+      target="migrate"
+      ;;
     *)
       say "Invalid target: $target"
       usage
@@ -238,6 +559,11 @@ fi
 
 if [ "$target" = "code" ] && [ "$include_browser_site_data" = "1" ]; then
   say "INCLUDE_BROWSER_SITE_DATA=1 only applies to TARGET=desktop and will be ignored."
+fi
+
+if [ "$target" = "migrate" ]; then
+  migrate_claude_code_data
+  exit $?
 fi
 
 say "Cleanup target: $target"
@@ -318,6 +644,8 @@ if [ "$target" = "code" ]; then
   if [ -n "$code_config_dir" ]; then
     backup_claude_code_user_data "$code_config_dir"
     say "Preserving Claude Code projects, conversations, settings, extensions, and .claude.json."
+    remove_claude_code_root_account_metadata || say "Warning: credentials and cache will still be cleared, but .claude.json account metadata could not be removed."
+    say "After signing in to the new account, run this same script again and choose option 3 to merge the backup."
     say "Removing Claude Code credentials and cache..."
     remove_path "$code_config_dir/.credentials.json"
     remove_path "$code_config_dir/cache"

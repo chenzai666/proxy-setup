@@ -232,9 +232,7 @@ proxy-setup/
 ├── setup_proxy_cmd.txt             # jsdelivr 可下载的 CMD 启动器镜像
 ├── setup_proxy.ps1                 # PowerShell 代理配置脚本
 ├── clear_claude_login_state.ps1        # Windows Claude 登录状态清理脚本
-├── clear_claude_login_state_macos.sh   # macOS Claude 登录状态清理脚本
-├── migrate_claude_code_account_windows.ps1 # Windows Claude Code 账号数据迁移
-└── migrate_claude_code_account_macos.sh    # macOS Claude Code 账号数据迁移
+└── clear_claude_login_state_macos.sh   # macOS Claude 登录状态清理脚本
 ```
 
 ## 仓库地址
@@ -325,21 +323,26 @@ bash install_claude_code_linux.sh
 
 ## Claude 登录状态清理
 
-用于清理 Claude 桌面端或 Claude Code 的本地登录状态和缓存。执行脚本后会让你选择清理目标：
+用于清理 Claude 桌面端或 Claude Code 的本地登录状态和缓存，也包含旧 Claude Code 数据迁移。执行脚本后会让你选择：
 
 ```text
 1) Claude Desktop only
-2) Claude Code only
+2) Clear Claude Code login state and cache
+3) Migrate old Claude Code data into the current new account
 ```
 
-两个目标互斥，选桌面端就只清桌面端，选 Claude Code 就只清 Claude Code，不会顺手影响另一个。
+选桌面端只清桌面端；选 Claude Code 只清 Claude Code 登录状态和缓存；选迁移则只合并旧的本地工作数据到当前已登录的新账号，不会顺手影响另一个。
 
 清理范围：
 
 - Claude Desktop：只清 Claude 桌面端 Electron 应用数据、缓存、偏好和保存状态。
-- Claude Code：只清理 `~/.claude/.credentials.json`、`~/.claude/cache` 和登录凭据；macOS 会额外尝试清理 Claude Code 的 Keychain 凭据。不会删除 `~/.claude`、`~/.claude.json`、`projects`、对话历史、设置、commands、agents、skills 或 plugins。
+- Claude Code：只清理 `~/.claude/.credentials.json`、`~/.claude/cache` 和登录凭据；macOS 会额外尝试清理 Claude Code 的 Keychain 凭据。不会删除 `~/.claude`、项目、对话历史、设置、commands、agents、skills 或 plugins；在完整备份后，仅从 `~/.claude.json` 移除旧账号的 `oauthAccount`、`userID`、`machineID`，项目登记和用户设置仍保留。
 
 执行 Claude Code 清理前，脚本会把现有的项目会话、历史、设置和扩展配置自动备份到 `~/.claude-cleanup-backups/时间戳/`。备份不包含 `.credentials.json`，避免在登出后继续保存可用令牌；清理失败或误操作时，可从该目录恢复受保护数据。
+
+切换账号的流程是：先选择 `2` 清缓存，脚本会自动备份旧项目数据；登录新账号后，再运行同一个脚本选择 `3`。迁移会自动使用最新清理备份，也可手动指定旧 `.claude` 或备份目录。只合并 `projects`、`sessions`、`history.jsonl`、`commands`、`agents`、`skills`、`plugins`、`todos`、`plans` 等本地工作数据；旧账号的 `.credentials.json`、`cache`、`telemetry`、`oauthAccount`、`userID`、`machineID` 永不导入。同名冲突时保留新账号版本。
+
+迁移提交前会把当前新账号的完整 `.claude` 快照保存到 `~/.claude-migration-backups/时间戳/current-claude`，提交失败时自动回滚。确认迁移正常前不要删除该目录。已经被永久删除且没有任何备份的本地 JSONL 对话，以及云端 Cowork/Chat 数据，无法由本脚本恢复。
 
 浏览器/PWA 的 `claude.ai` 站点存储不会默认清理；需要时再额外启用浏览器清理选项。
 
@@ -374,7 +377,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.p
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Desktop
 powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Code
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Migrate
 ```
+
+迁移前请先登录新账号；自动化时可用 `-Yes` 跳过确认。未指定来源时自动使用最新清理备份，手动指定旧数据或预演示例：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Migrate -MigrationSource "D:\backup\.claude" -WhatIf
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clear_claude_login_state.ps1 -Target Migrate -MigrationSource "D:\backup\.claude" -Yes
+```
+
+确实准备在未登录状态迁移时，才额外使用 `-AllowLoggedOut`。
 
 如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在选择桌面端时加 `-IncludeBrowserIndexedDb`。
 
@@ -411,68 +424,21 @@ DRY_RUN=1 bash clear_claude_login_state_macos.sh
 ```bash
 bash clear_claude_login_state_macos.sh --target desktop
 bash clear_claude_login_state_macos.sh --target code
+bash clear_claude_login_state_macos.sh --target migrate
 ```
+
+迁移前请先登录新账号；自动化时可用 `--yes` 跳过确认。未指定来源时自动使用最新清理备份，手动指定旧数据或预演示例：
+
+```bash
+bash clear_claude_login_state_macos.sh --target migrate --source "/Volumes/Backup/.claude" --dry-run
+bash clear_claude_login_state_macos.sh --target migrate --source "/Volumes/Backup/.claude" --yes
+```
+
+确实准备在未登录状态迁移时，才额外使用 `--allow-logged-out`。
 
 如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在选择桌面端时加 `INCLUDE_BROWSER_SITE_DATA=1`。
 
 > CDN 可能有缓存延迟；需要立即使用最新版本时，请优先用 raw.githubusercontent 命令。
-
-## Claude Code 旧账号数据迁移
-
-用于把旧账号仍保存在本机或清理备份中的项目、会话和用户配置，安全合并到已经登录的新账号。脚本同时支持 Windows 和 macOS。
-
-迁移内容包括 `projects`、`sessions`、`history.jsonl`、`commands`、`agents`、`skills`、`plugins`、`todos`、`plans` 等本地工作数据，以及当前账号缺失的设置文件。旧账号的 `.credentials.json`、`cache`、`telemetry`、`oauthAccount`、`userID`、`machineID` 不会导入；同名文件冲突时保留当前新账号版本。
-
-迁移前会把当前账号的完整 `.claude` 目录移动到 `~/.claude-migration-backups/时间戳/current-claude`，提交失败时自动回滚。确认迁移正常前不要删除该回滚目录。已经被永久删除且没有任何备份的本地 JSONL 对话，以及云端 Cowork/Chat 数据，无法由本工具恢复。
-
-### Windows
-
-先登录新账号，再执行：
-
-```powershell
-$u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/migrate_claude_code_account_windows.ps1';$p="$env:TEMP\migrate_claude_code_account_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
-```
-
-jsDelivr 加速版：
-
-```powershell
-$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/migrate_claude_code_account_windows.ps1';$p="$env:TEMP\migrate_claude_code_account_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
-```
-
-未指定 `-Source` 时，脚本自动选择 `~/.claude-cleanup-backups` 下最新的备份。也可以指定旧 `.claude` 目录或包含 `.claude` 的备份目录：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\migrate_claude_code_account_windows.ps1 -Source "D:\backup\.claude"
-```
-
-预演不会停止进程或修改文件：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\migrate_claude_code_account_windows.ps1 -Source "D:\backup\.claude" -WhatIf
-```
-
-### macOS
-
-先登录新账号，再执行：
-
-```bash
-t="$(mktemp -t migrate_claude_code_account_macos.XXXXXX)" && trap 'rm -f "$t"' EXIT && curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/migrate_claude_code_account_macos.sh -o "$t" && bash "$t"
-```
-
-jsDelivr 加速版：
-
-```bash
-t="$(mktemp -t migrate_claude_code_account_macos.XXXXXX)" && trap 'rm -f "$t"' EXIT && curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/migrate_claude_code_account_macos.sh -o "$t" && bash "$t"
-```
-
-未指定 `--source` 时同样自动选择最新清理备份；手动指定旧数据和预演示例：
-
-```bash
-bash migrate_claude_code_account_macos.sh --source "/Volumes/Backup/.claude"
-bash migrate_claude_code_account_macos.sh --source "/Volumes/Backup/.claude" --dry-run
-```
-
-自动化运行可分别使用 Windows 的 `-Yes` 或 macOS 的 `--yes` 跳过确认。只有确实准备在未登录状态下迁移时，才使用 `-AllowLoggedOut` 或 `--allow-logged-out`。
 
 ## Claude Code 画像一致启动器
 

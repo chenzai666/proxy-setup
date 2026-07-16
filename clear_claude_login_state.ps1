@@ -46,6 +46,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$unsafeCleanupTargets = [System.Collections.Generic.List[string]]::new()
 
 function Resolve-FullPath {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -70,9 +71,25 @@ function Test-PathInsideRoot {
 
     $fullPath = Resolve-FullPath $Path
     $rootPath = (Resolve-FullPath $Root).TrimEnd('\')
+    if ($fullPath -ne $rootPath -and -not $fullPath.StartsWith($rootPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
 
-    return ($fullPath -eq $rootPath) -or
-        $fullPath.StartsWith($rootPath + '\', [System.StringComparison]::OrdinalIgnoreCase)
+    # GetFullPath is lexical only. Reject junctions/symlinks so a path that
+    # looks user-scoped cannot resolve to data outside the selected profile.
+    $currentPath = $rootPath
+    if (Test-Path -LiteralPath $currentPath) {
+        $rootItem = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+        if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+    }
+    $relativePath = $fullPath.Substring($rootPath.Length).TrimStart('\')
+    foreach ($segment in $relativePath.Split('\', [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        $currentPath = Join-Path $currentPath $segment
+        if (-not (Test-Path -LiteralPath $currentPath)) { break }
+        $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+    }
+    return $true
 }
 
 function Add-Target {
@@ -90,21 +107,23 @@ function Add-Target {
     $fullPath = Resolve-FullPath $Path
 
     if (-not (Test-PathInsideUserProfile $fullPath)) {
-        Write-Warning "Skipped path outside user profile: $fullPath"
-        return
+        Write-Warning "Skipped unsafe or outside-user-profile path: $fullPath"
+        if (-not $unsafeCleanupTargets.Contains($fullPath)) { $unsafeCleanupTargets.Add($fullPath) | Out-Null }
+        return $false
     }
 
     if (-not $Targets.Contains($fullPath)) {
         $Targets.Add($fullPath) | Out-Null
     }
+    return $true
 }
 
 function Remove-Target {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     if (-not (Test-PathInsideUserProfile $Path)) {
-        Write-Warning "Skipped path outside user profile: $Path"
-        return
+        Write-Warning "Skipped unsafe or outside-user-profile path: $Path"
+        return $false
     }
 
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -222,6 +241,9 @@ function Remove-ClaudeCodeRootAccountMetadata {
         Write-Host 'Removed account-specific fields from .claude.json while preserving project and user settings.'
         return $true
     } catch {
+        if ($temporary -and (Test-Path -LiteralPath $temporary)) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
         Write-Warning "Could not remove account metadata from .claude.json: $($_.Exception.Message)"
         return $false
     }
@@ -268,6 +290,7 @@ function Stop-CleanupProcesses {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Targets
     )
 
+    if ($WhatIfPreference) { return $true }
     $stoppedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
     $candidates = @($ClaudeProcesses)
 
@@ -300,6 +323,18 @@ function Stop-CleanupProcesses {
         Start-Sleep -Seconds 1
         $candidates = @()
     }
+
+    $remainingProcessIds = @()
+    foreach ($processId in $stoppedProcessIds) {
+        if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
+            $remainingProcessIds += $processId
+        }
+    }
+    if ($remainingProcessIds.Count -gt 0) {
+        Write-Warning "Claude-related processes are still running: $($remainingProcessIds -join ', ')"
+        return $false
+    }
+    return $true
 }
 
 function Test-ClaudeDesktopProcess {
@@ -547,7 +582,13 @@ function Invoke-ClaudeCodeDataMigration {
 
     $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { Test-ClaudeCodeProcess -Process $_ })
     $emptyTargets = [System.Collections.Generic.List[string]]::new()
-    Stop-CleanupProcesses -ClaudeProcesses $processes -Targets $emptyTargets
+    if (-not (Stop-CleanupProcesses -ClaudeProcesses $processes -Targets $emptyTargets)) {
+        throw 'Claude Code is still running. Close it completely before migrating data.'
+    }
+    $remainingCodeProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { Test-ClaudeCodeProcess -Process $_ })
+    if ($remainingCodeProcesses.Count -gt 0) {
+        throw "Claude Code is still running (PID: $($remainingCodeProcesses.ProcessId -join ', ')). Close it completely before migrating data."
+    }
     $destinationParent = Split-Path -Parent $destination
     $destinationName = Split-Path -Leaf $destination
     New-Item -ItemType Directory -Path $destinationParent, $rollbackRoot -Force | Out-Null
@@ -775,8 +816,8 @@ if ($Target -eq 'Code') {
     try {
         $codeConfigDir = Get-ClaudeCodeConfigDirectory
     } catch {
-        Write-Warning "Unsafe CLAUDE_CONFIG_DIR was rejected; file cleanup will be skipped: $($_.Exception.Message)"
-        $codeConfigDir = $null
+        Write-Error "Unsafe CLAUDE_CONFIG_DIR was rejected; no files were cleaned: $($_.Exception.Message)"
+        exit 1
     }
     if ($codeConfigDir) {
         Add-Target -Targets $targets -Path (Join-Path $codeConfigDir '.credentials.json')
@@ -786,7 +827,10 @@ if ($Target -eq 'Code') {
 
 Write-Host "Stopping Claude processes..."
 
-Stop-CleanupProcesses -ClaudeProcesses $claudeProcesses -Targets $targets
+if (-not (Stop-CleanupProcesses -ClaudeProcesses $claudeProcesses -Targets $targets)) {
+    Write-Error 'Cleanup was not started because Claude-related processes are still running.'
+    exit 1
+}
 
 if ($Target -eq 'Code' -and $codeConfigDir) {
     $cleanupBackup = Backup-ClaudeCodeUserData -CodeConfigDir $codeConfigDir
@@ -814,6 +858,11 @@ foreach ($targetPath in $targets) {
 
 if ($failedTargets.Count -gt 0) {
     Write-Error "Cleanup was incomplete. Close the remaining Claude-related processes and run the script again. Remaining paths: $($failedTargets -join '; ')"
+    exit 1
+}
+
+if ($unsafeCleanupTargets.Count -gt 0) {
+    Write-Error "Cleanup was not completed because unsafe paths were rejected: $($unsafeCleanupTargets -join '; ')"
     exit 1
 }
 

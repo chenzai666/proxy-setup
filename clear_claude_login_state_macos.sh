@@ -22,6 +22,7 @@ include_browser_site_data="${INCLUDE_BROWSER_SITE_DATA:-0}"
 migration_source="${MIGRATION_SOURCE:-}"
 assume_yes="${ASSUME_YES:-0}"
 allow_logged_out="${ALLOW_LOGGED_OUT:-0}"
+cleanup_failures=()
 
 home_dir="${HOME:?HOME is not set}"
 home_dir="$(cd "$home_dir" 2>/dev/null && pwd -P)" || {
@@ -31,6 +32,10 @@ home_dir="$(cd "$home_dir" 2>/dev/null && pwd -P)" || {
 
 say() {
   printf '%s\n' "$*"
+}
+
+record_cleanup_failure() {
+  cleanup_failures+=("$1")
 }
 
 usage() {
@@ -91,14 +96,16 @@ remove_path() {
 
   full_path="$(normalize_path "$path")" || {
     say "Skipped unresolved path: $path"
-    return
+    record_cleanup_failure "$path (unresolved)"
+    return 0
   }
 
   case "$full_path" in
     "$home_dir"/*) ;;
     *)
       say "Skipped path outside HOME: $full_path"
-      return
+      record_cleanup_failure "$full_path (outside HOME)"
+      return 0
       ;;
   esac
 
@@ -110,9 +117,15 @@ remove_path() {
     say "Would remove: $full_path"
   else
     if rm -rf "$full_path" 2>/dev/null; then
-      say "Removed: $full_path"
+      if [ -e "$full_path" ] || [ -L "$full_path" ]; then
+        say "Warning: still present after cleanup: $full_path"
+        record_cleanup_failure "$full_path"
+      else
+        say "Removed: $full_path"
+      fi
     else
       say "Warning: could not remove $full_path (check permissions)"
+      record_cleanup_failure "$full_path"
     fi
   fi
 }
@@ -169,6 +182,10 @@ backup_claude_code_user_data() {
 remove_claude_code_root_account_metadata() {
   local root_config="$home_dir/.claude.json" temporary
   [ -f "$root_config" ] || return 0
+  if [ -L "$root_config" ]; then
+    say "Warning: .claude.json is a symlink; account metadata was not modified."
+    return 1
+  fi
   if [ "$dry_run" = "1" ]; then
     say "Would remove account-specific fields from: $root_config"
     return 0
@@ -228,14 +245,68 @@ normalize_path() {
 }
 
 get_claude_code_config_dir() {
-  local config_dir
+  local config_dir physical_config_dir
   config_dir="$(normalize_path "${CLAUDE_CONFIG_DIR:-$home_dir/.claude}")" || return 1
   case "$config_dir" in
     "$home_dir"/*) ;;
     *) return 1 ;;
   esac
   [ "$config_dir" != "$home_dir" ] || return 1
+  [ ! -L "$config_dir" ] || return 1
+  if [ -d "$config_dir" ]; then
+    physical_config_dir="$(cd "$config_dir" 2>/dev/null && pwd -P)" || return 1
+    [ "$physical_config_dir" = "$config_dir" ] || return 1
+  fi
   printf '%s\n' "$config_dir"
+}
+
+stop_claude_code_processes() {
+  if [ "$dry_run" = "1" ]; then
+    say "Would run: pkill -x claude"
+    say "Would stop @anthropic-ai/claude-code processes"
+    return 0
+  fi
+  pkill -x claude >/dev/null 2>&1 || true
+  pkill -f '@anthropic-ai/claude-code' >/dev/null 2>&1 || true
+  if pgrep -x claude >/dev/null 2>&1 || pgrep -f '@anthropic-ai/claude-code' >/dev/null 2>&1; then
+    say "Warning: Claude Code is still running."
+    return 1
+  fi
+  return 0
+}
+
+clear_claude_code_keychain_service() {
+  local service="$1" find_status
+  if [ "$dry_run" = "1" ]; then
+    say "Would remove keychain service: $service"
+    return 0
+  fi
+  if ! command -v security >/dev/null 2>&1; then
+    say "Warning: security is unavailable; could not verify keychain service: $service"
+    record_cleanup_failure "Keychain service $service (security unavailable)"
+    return 0
+  fi
+  if security find-generic-password -s "$service" >/dev/null 2>&1; then
+    find_status=0
+  else
+    find_status=$?
+  fi
+  if [ "$find_status" -eq 44 ]; then return 0; fi
+  if [ "$find_status" -ne 0 ]; then
+    say "Warning: could not inspect keychain service: $service"
+    record_cleanup_failure "Keychain service $service (cannot inspect)"
+    return 0
+  fi
+  if ! security delete-generic-password -s "$service" >/dev/null 2>&1; then
+    say "Warning: could not remove keychain service: $service"
+    record_cleanup_failure "Keychain service $service"
+    return 0
+  fi
+  if security find-generic-password -s "$service" >/dev/null 2>&1; then
+    say "Warning: keychain service remains after cleanup: $service"
+    record_cleanup_failure "Keychain service $service"
+  fi
+  return 0
 }
 
 migration_path_mtime() {
@@ -374,8 +445,10 @@ migrate_claude_code_data() {
   fi
 
   say "Stopping Claude Code..."
-  pkill -x claude >/dev/null 2>&1 || true
-  pkill -f '@anthropic-ai/claude-code' >/dev/null 2>&1 || true
+  if ! stop_claude_code_processes; then
+    say "Migration was not started because Claude Code is still running."
+    return 1
+  fi
   destination_parent="$(dirname "$destination")"
   destination_name="$(basename "$destination")"
   mkdir -p "$destination_parent" "$rollback_root"
@@ -622,34 +695,26 @@ if [ "$target" = "desktop" ]; then
 fi
 
 if [ "$target" = "code" ]; then
-  if ! code_config_dir="$(normalize_path "${CLAUDE_CONFIG_DIR:-$home_dir/.claude}")"; then
-    code_config_dir=""
+  if ! code_config_dir="$(get_claude_code_config_dir)"; then
+    say "Unsafe CLAUDE_CONFIG_DIR was rejected; no files were cleaned: ${CLAUDE_CONFIG_DIR:-$home_dir/.claude}"
+    exit 1
   fi
-  case "$code_config_dir" in
-    "$home_dir"/*) ;;
-    *)
-      say "Unsafe CLAUDE_CONFIG_DIR was rejected; file cleanup will be skipped: ${CLAUDE_CONFIG_DIR:-$home_dir/.claude}"
-      code_config_dir=""
-      ;;
-  esac
   say "Stopping Claude Code..."
-  if [ "$dry_run" = "1" ]; then
-    say "Would run: pkill -x claude"
-    say "Would stop @anthropic-ai/claude-code processes"
-  else
-    pkill -x claude >/dev/null 2>&1 || true
-    pkill -f '@anthropic-ai/claude-code' >/dev/null 2>&1 || true
+  if ! stop_claude_code_processes; then
+    say "Cleanup was not started because Claude Code is still running."
+    exit 1
   fi
 
-  if [ -n "$code_config_dir" ]; then
-    backup_claude_code_user_data "$code_config_dir"
-    say "Preserving Claude Code projects, conversations, settings, extensions, and .claude.json."
-    remove_claude_code_root_account_metadata || say "Warning: credentials and cache will still be cleared, but .claude.json account metadata could not be removed."
-    say "After signing in to the new account, run this same script again and choose option 3 to merge the backup."
-    say "Removing Claude Code credentials and cache..."
-    remove_path "$code_config_dir/.credentials.json"
-    remove_path "$code_config_dir/cache"
+  backup_claude_code_user_data "$code_config_dir"
+  say "Preserving Claude Code projects, conversations, settings, extensions, and .claude.json."
+  if ! remove_claude_code_root_account_metadata; then
+    say "Warning: credentials and cache will still be cleared, but .claude.json account metadata could not be removed."
+    record_cleanup_failure ".claude.json account metadata"
   fi
+  say "After signing in to the new account, run this same script again and choose option 3 to merge the backup."
+  say "Removing Claude Code credentials and cache..."
+  remove_path "$code_config_dir/.credentials.json"
+  remove_path "$code_config_dir/cache"
 
   keychain_services=(
     "Claude Code-credentials"
@@ -659,11 +724,7 @@ if [ "$target" = "code" ]; then
   )
 
   for service in "${keychain_services[@]}"; do
-    if [ "$dry_run" = "1" ]; then
-      say "Would remove keychain service: $service"
-    else
-      security delete-generic-password -s "$service" >/dev/null 2>&1 || true
-    fi
+    clear_claude_code_keychain_service "$service"
   done
 fi
 
@@ -696,6 +757,13 @@ if [ "$dry_run" = "1" ]; then
   say ""
   say "Preview complete. No files or credentials were removed."
   exit 0
+fi
+
+if [ "${#cleanup_failures[@]}" -gt 0 ]; then
+  say ""
+  say "Cleanup was incomplete. Remaining or unverified targets:"
+  for failure in "${cleanup_failures[@]}"; do say "  $failure"; done
+  exit 1
 fi
 
 say ""

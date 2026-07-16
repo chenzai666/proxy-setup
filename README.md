@@ -344,6 +344,8 @@ bash install_claude_code_linux.sh
 
 迁移提交前会把当前新账号的完整 `.claude` 快照保存到 `~/.claude-migration-backups/时间戳/current-claude`，提交失败时自动回滚。确认迁移正常前不要删除该目录。已经被永久删除且没有任何备份的本地 JSONL 对话，以及云端 Cowork/Chat 数据，无法由本脚本恢复。
 
+清缓存或迁移前，脚本会先结束 Claude Code；如果相关进程仍在运行、配置目录是指向其他位置的符号链接/junction，或任一清理目标无法确认删除，脚本会停止并返回失败，不会继续切换目录或误报完成。
+
 浏览器/PWA 的 `claude.ai` 站点存储不会默认清理；需要时再额外启用浏览器清理选项。
 
 ### Windows

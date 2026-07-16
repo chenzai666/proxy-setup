@@ -336,15 +336,15 @@ bash install_claude_code_linux.sh
 清理范围：
 
 - Claude Desktop：只清 Claude 桌面端 Electron 应用数据、缓存、偏好和保存状态。
-- Claude Code：只清理 `~/.claude/.credentials.json`、`~/.claude/cache` 和登录凭据；macOS 会额外尝试清理 Claude Code 的 Keychain 凭据。不会删除 `~/.claude`、项目、对话历史、设置、commands、agents、skills 或 plugins；在完整备份后，仅从 `~/.claude.json` 移除旧账号的 `oauthAccount`、`userID`、`machineID`，项目登记和用户设置仍保留。
+- Claude Code：会清理 `~/.claude/.credentials.json`、`~/.claude/cache`、`settings.json`、`settings.local.json`、`config.json` 和登录凭据；macOS 会额外尝试清理 Claude Code 的 Keychain 凭据。项目、对话历史、commands、agents、skills、plugins 及完整旧设置会先备份，活动 `~/.claude` 不会被整目录删除。清理后会从 `~/.claude.json` 移除旧账号的 `oauthAccount`、`userID`、`machineID` 和 `mcpServers`，避免旧令牌、请求头或路由地址留给新账号。
 
-执行 Claude Code 清理前，脚本会把现有的项目会话、历史、设置和扩展配置自动备份到 `~/.claude-cleanup-backups/时间戳/`。备份不包含 `.credentials.json`，避免在登出后继续保存可用令牌；清理失败或误操作时，可从该目录恢复受保护数据。
+执行 Claude Code 清理前，脚本会把现有的项目会话、历史、设置和扩展配置自动备份到 `~/.claude-cleanup-backups/时间戳/`，完成复制后才写入 `BACKUP_COMPLETE` 标记。备份不包含 `.credentials.json`，避免在登出后继续保存可用令牌；清理失败或误操作时，可从该目录恢复受保护数据。自动迁移优先选择带完成标记的最新备份，不会把未完成的临时目录当作数据来源。
 
-切换账号的流程是：先选择 `2` 清缓存，脚本会自动备份旧项目数据；登录新账号后，再运行同一个脚本选择 `3`。迁移会自动使用最新清理备份，也可手动指定旧 `.claude` 或备份目录。只合并 `projects`、`sessions`、`history.jsonl`、`commands`、`agents`、`skills`、`plugins`、`todos`、`plans` 等本地工作数据；旧账号的 `.credentials.json`、`cache`、`telemetry`、`oauthAccount`、`userID`、`machineID` 永不导入。同名冲突时保留新账号版本。
+切换账号的流程是：先选择 `2` 清缓存，脚本会自动备份旧项目数据；登录新账号后，再运行同一个脚本选择 `3`。迁移会自动使用最新清理备份，也可手动指定旧 `.claude` 或备份目录。只合并 `projects`、`sessions`、`history.jsonl`、`commands`、`agents`、`skills`、`plugins`、`todos`、`plans` 及缺失的 `CLAUDE.md` 等本地工作数据；旧账号的 `.credentials.json`、`cache`、`telemetry`、`settings.json`、`settings.local.json`、`config.json`、`oauthAccount`、`userID`、`machineID`、`mcpServers` 永不导入。同名冲突时保留新账号版本。
 
 迁移提交前会把当前新账号的完整 `.claude` 快照保存到 `~/.claude-migration-backups/时间戳/current-claude`，提交失败时自动回滚。确认迁移正常前不要删除该目录。已经被永久删除且没有任何备份的本地 JSONL 对话，以及云端 Cowork/Chat 数据，无法由本脚本恢复。
 
-清缓存或迁移前，脚本会先结束 Claude Code；如果相关进程仍在运行、配置目录是指向其他位置的符号链接/junction，或任一清理目标无法确认删除，脚本会停止并返回失败，不会继续切换目录或误报完成。
+清缓存或迁移前，脚本会先结束 Claude Code；如果相关进程仍在运行、配置目录、备份目录、待备份数据或迁移来源含符号链接/junction，或任一清理目标无法确认删除，脚本会停止并返回失败，不会继续切换目录或误报完成。
 
 浏览器/PWA 的 `claude.ai` 站点存储不会默认清理；需要时再额外启用浏览器清理选项。
 

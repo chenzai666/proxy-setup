@@ -62,6 +62,19 @@ function Test-PathInsideUserProfile {
     return Test-PathInsideRoot -Path $Path -Root $UserProfile
 }
 
+function Assert-SafeUserProfilePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [switch]$AllowUserProfileRoot
+    )
+    $fullPath = Resolve-FullPath $Path
+    if (-not (Test-PathInsideUserProfile $fullPath) -or (-not $AllowUserProfileRoot -and $fullPath -eq $UserProfile)) {
+        throw "$Label must be a non-reparse path inside the selected user profile: $fullPath"
+    }
+    return $fullPath
+}
+
 function Test-PathInsideRoot {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -115,7 +128,7 @@ function Add-Target {
     if (-not $Targets.Contains($fullPath)) {
         $Targets.Add($fullPath) | Out-Null
     }
-    return $true
+    return
 }
 
 function Remove-Target {
@@ -173,12 +186,15 @@ function Backup-ClaudeCodeUserData {
     foreach ($name in $protectedNames) {
         $source = Join-Path $CodeConfigDir $name
         if (Test-Path -LiteralPath $source) {
+            Assert-NoMigrationReparsePoints -Path $source
             $sources.Add([pscustomobject]@{ Source = $source; Relative = Join-Path '.claude' $name }) | Out-Null
         }
     }
 
     $rootConfig = Join-Path $UserProfile '.claude.json'
     if (Test-Path -LiteralPath $rootConfig) {
+        Assert-SafeUserProfilePath -Path $rootConfig -Label 'Claude Code root configuration' | Out-Null
+        Assert-NoMigrationReparsePoints -Path $rootConfig
         $sources.Add([pscustomobject]@{ Source = $rootConfig; Relative = '.claude.json' }) | Out-Null
     }
 
@@ -187,22 +203,30 @@ function Backup-ClaudeCodeUserData {
         return $null
     }
 
-    $backupRoot = Join-Path $UserProfile '.claude-cleanup-backups'
+    $backupRoot = Assert-SafeUserProfilePath -Path (Join-Path $UserProfile '.claude-cleanup-backups') -Label 'Claude Code cleanup backup directory'
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $destination = Join-Path $backupRoot $stamp
     if (Test-Path -LiteralPath $destination) {
         $destination = Join-Path $backupRoot ("$stamp-$([guid]::NewGuid().ToString('N').Substring(0, 8))")
     }
+    $stage = Join-Path $backupRoot (".$stamp.backup-stage-$([guid]::NewGuid().ToString('N'))")
 
     if ($PSCmdlet.ShouldProcess($destination, 'Back up protected Claude Code data before credential cleanup')) {
-        New-Item -ItemType Directory -Path $destination -Force | Out-Null
-        foreach ($item in $sources) {
-            $target = Join-Path $destination $item.Relative
-            $parent = Split-Path -Parent $target
-            if (-not (Test-Path -LiteralPath $parent)) {
-                New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        try {
+            foreach ($item in $sources) {
+                $target = Join-Path $stage $item.Relative
+                $parent = Split-Path -Parent $target
+                if (-not (Test-Path -LiteralPath $parent)) {
+                    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+                }
+                Copy-Item -LiteralPath $item.Source -Destination $target -Recurse -Force -ErrorAction Stop
             }
-            Copy-Item -LiteralPath $item.Source -Destination $target -Recurse -Force -ErrorAction Stop
+            [System.IO.File]::WriteAllText((Join-Path $stage 'BACKUP_COMPLETE'), (Get-Date -Format 'o'), [System.Text.UTF8Encoding]::new($false))
+            Move-Item -LiteralPath $stage -Destination $destination -ErrorAction Stop
+        } catch {
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+            throw
         }
         Write-Host "Backup created: $destination"
     } else {
@@ -215,6 +239,12 @@ function Backup-ClaudeCodeUserData {
 function Remove-ClaudeCodeRootAccountMetadata {
     $rootConfig = Join-Path $UserProfile '.claude.json'
     if (-not (Test-Path -LiteralPath $rootConfig)) { return $true }
+    try {
+        Assert-SafeUserProfilePath -Path $rootConfig -Label 'Claude Code root configuration' | Out-Null
+    } catch {
+        Write-Warning $_.Exception.Message
+        return $false
+    }
     if (-not $PSCmdlet.ShouldProcess($rootConfig, 'Remove Claude Code account metadata while preserving project configuration')) {
         return $true
     }
@@ -228,7 +258,7 @@ function Remove-ClaudeCodeRootAccountMetadata {
             return $false
         }
         $changed = $false
-        foreach ($key in @('oauthAccount', 'userID', 'machineID')) {
+        foreach ($key in @('oauthAccount', 'userID', 'machineID', 'mcpServers')) {
             if ($config.ContainsKey($key)) {
                 $config.Remove($key)
                 $changed = $true
@@ -392,13 +422,42 @@ function Get-ClaudeCodeConfigDirectory {
 
 function Find-LatestClaudeCodeCleanupBackup {
     $backupRoot = Join-Path $UserProfile '.claude-cleanup-backups'
+    try {
+        $backupRoot = Assert-SafeUserProfilePath -Path $backupRoot -Label 'Claude Code cleanup backup directory'
+    } catch {
+        Write-Warning $_.Exception.Message
+        return $null
+    }
     if (-not (Test-Path -LiteralPath $backupRoot)) { return $null }
-    return @(
+    $candidates = @(
         Get-ChildItem -LiteralPath $backupRoot -Directory -Force -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.claude') } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-    ) | ForEach-Object { $_.FullName }
+            Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.claude')) }
+    )
+    $completed = @($candidates | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'BACKUP_COMPLETE') })
+    # A newer incomplete directory can be left behind by a failed copy. Prefer
+    # a completed backup even when its timestamp is older than that staging data.
+    $selected = @(
+        if ($completed.Count -gt 0) {
+            $completed | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        } else {
+            $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        }
+    )
+    return $selected | ForEach-Object { $_.FullName }
+}
+
+function Assert-NoMigrationReparsePoints {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Unsafe reparse point was rejected: $Path"
+    }
+    if ($item.PSIsContainer) {
+        foreach ($child in Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop) {
+            Assert-NoMigrationReparsePoints -Path $child.FullName
+        }
+    }
 }
 
 function Get-MigrationFileCount {
@@ -416,7 +475,10 @@ function Merge-MigrationItemNoClobber {
     $relative = $Item.FullName.Substring($SourceRoot.Length).TrimStart('\')
     $target = Join-Path $TargetRoot $relative
     $isReparsePoint = ($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
-    if ($Item.PSIsContainer -and -not $isReparsePoint) {
+    if ($isReparsePoint) {
+        throw "Unsafe reparse point was rejected: $($Item.FullName)"
+    }
+    if ($Item.PSIsContainer) {
         if (-not (Test-Path -LiteralPath $target)) {
             New-Item -ItemType Directory -Path $target -Force | Out-Null
         }
@@ -500,7 +562,7 @@ function New-MergedClaudeCodeRootConfig {
     } else {
         [System.Collections.Generic.Dictionary[string, object]]::new()
     }
-    foreach ($key in @('projects', 'mcpServers')) {
+    foreach ($key in @('projects')) {
         if (-not ($sourceObject -is [System.Collections.IDictionary]) -or -not $sourceObject.ContainsKey($key)) { continue }
         $sourceMap = $sourceObject[$key]
         if (-not ($sourceMap -is [System.Collections.IDictionary])) { continue }
@@ -512,11 +574,45 @@ function New-MergedClaudeCodeRootConfig {
     [System.IO.File]::WriteAllText($OutputFile, $serializer.Serialize($destinationObject), [System.Text.UTF8Encoding]::new($false))
 }
 
+function Restore-MigrationDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$CurrentPath,
+        [Parameter(Mandatory = $true)][string]$RollbackPath
+    )
+    if (Test-Path -LiteralPath $CurrentPath) {
+        Remove-Item -LiteralPath $CurrentPath -Recurse -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $CurrentPath) {
+        throw "Cannot remove the partially installed directory: $CurrentPath"
+    }
+    Move-Item -LiteralPath $RollbackPath -Destination $CurrentPath -ErrorAction Stop
+    if (-not (Test-Path -LiteralPath $CurrentPath)) {
+        throw "Rollback directory was not restored: $CurrentPath"
+    }
+}
+
+function Restore-MigrationFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$CurrentPath,
+        [Parameter(Mandatory = $true)][string]$RollbackPath
+    )
+    if (Test-Path -LiteralPath $CurrentPath) {
+        Remove-Item -LiteralPath $CurrentPath -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $CurrentPath) {
+        throw "Cannot remove the partially installed file: $CurrentPath"
+    }
+    Move-Item -LiteralPath $RollbackPath -Destination $CurrentPath -ErrorAction Stop
+    if (-not (Test-Path -LiteralPath $CurrentPath)) {
+        throw "Rollback file was not restored: $CurrentPath"
+    }
+}
+
 function Invoke-ClaudeCodeDataMigration {
     param([string]$Source = '')
 
     $destination = Get-ClaudeCodeConfigDirectory
-    $rollbackRoot = Resolve-FullPath (Join-Path $UserProfile '.claude-migration-backups')
+    $rollbackRoot = Assert-SafeUserProfilePath -Path (Join-Path $UserProfile '.claude-migration-backups') -Label 'Claude Code migration rollback directory'
     if ((Test-PathInsideRoot -Path $rollbackRoot -Root $destination) -or
         (Test-PathInsideRoot -Path $destination -Root $rollbackRoot)) {
         throw 'The Claude Code destination and migration rollback directory cannot contain each other.'
@@ -527,6 +623,9 @@ function Invoke-ClaudeCodeDataMigration {
         Write-Host "Using latest cleanup backup: $Source"
     }
     if (-not (Test-Path -LiteralPath $Source)) { throw "Migration source does not exist: $Source" }
+    # Check the original source before Resolve-Path can hide a junction or
+    # symbolic-link entry point behind its target path.
+    Assert-NoMigrationReparsePoints -Path $Source
     $sourcePath = (Resolve-Path -LiteralPath $Source).Path
     $sourceConfig = $null
     $sourceRootJson = $null
@@ -541,17 +640,23 @@ function Invoke-ClaudeCodeDataMigration {
     } else {
         throw "Migration source has no recognizable Claude Code data: $sourcePath"
     }
+    if ($sourceRootJson) { Assert-NoMigrationReparsePoints -Path $sourceRootJson }
     if ($sourceConfig.Equals($destination, [System.StringComparison]::OrdinalIgnoreCase) -or (Test-PathInsideRoot -Path $sourceConfig -Root $destination)) {
         throw 'Migration source cannot be the current Claude Code directory or a child of it.'
     }
 
     $mergeDirectories = @('projects', 'sessions', 'commands', 'agents', 'skills', 'plugins', 'backups', 'session-env', 'shell-snapshots', 'todos', 'plans')
-    $missingOnlyFiles = @('settings.json', 'settings.local.json', 'config.json', 'CLAUDE.md')
+    # Settings and MCP configuration can contain tokens, headers, or old router
+    # endpoints. Only carry project guidance, never account/runtime configuration.
+    $missingOnlyFiles = @('CLAUDE.md')
     $hasImportable = Test-Path -LiteralPath (Join-Path $sourceConfig 'history.jsonl')
     foreach ($name in $mergeDirectories + $missingOnlyFiles) {
         if (Test-Path -LiteralPath (Join-Path $sourceConfig $name)) { $hasImportable = $true; break }
     }
     if (-not $hasImportable) { throw 'Migration source contains no supported Claude Code work data.' }
+    foreach ($name in $mergeDirectories + $missingOnlyFiles + @('history.jsonl')) {
+        Assert-NoMigrationReparsePoints -Path (Join-Path $sourceConfig $name)
+    }
 
     $currentCredential = Join-Path $destination '.credentials.json'
     $currentLoginFound = (Test-Path -LiteralPath $currentCredential) -or
@@ -614,7 +719,7 @@ function Invoke-ClaudeCodeDataMigration {
         }
         Merge-MigrationHistoryFile -SourceFile (Join-Path $sourceConfig 'history.jsonl') -TargetFile (Join-Path $stage 'history.jsonl')
 
-        $destinationRootJson = Join-Path $UserProfile '.claude.json'
+        $destinationRootJson = Assert-SafeUserProfilePath -Path (Join-Path $UserProfile '.claude.json') -Label 'Claude Code root configuration'
         $rootMergeReady = $false
         if ($sourceRootJson) {
             try {
@@ -646,13 +751,40 @@ function Invoke-ClaudeCodeDataMigration {
                 $rootInstalled = $true
             }
         } catch {
-            if ($destinationInstalled -and (Test-Path -LiteralPath $destination)) { Remove-Item -LiteralPath $destination -Recurse -Force -ErrorAction SilentlyContinue }
+            $commitError = $_
+            $rollbackErrors = [System.Collections.Generic.List[string]]::new()
             $oldDestination = Join-Path $rollbackDir 'current-claude'
-            if ($destinationMoved -and (Test-Path -LiteralPath $oldDestination)) { Move-Item -LiteralPath $oldDestination -Destination $destination -ErrorAction SilentlyContinue }
-            if ($rootInstalled -and (Test-Path -LiteralPath $destinationRootJson)) { Remove-Item -LiteralPath $destinationRootJson -Force -ErrorAction SilentlyContinue }
             $oldRoot = Join-Path $rollbackDir 'current-claude.json'
-            if ($rootMoved -and (Test-Path -LiteralPath $oldRoot)) { Move-Item -LiteralPath $oldRoot -Destination $destinationRootJson -ErrorAction SilentlyContinue }
-            throw
+            try {
+                if ($destinationInstalled -and (Test-Path -LiteralPath $oldDestination)) {
+                    Restore-MigrationDirectory -CurrentPath $destination -RollbackPath $oldDestination
+                } elseif ($destinationMoved -and (Test-Path -LiteralPath $oldDestination)) {
+                    if (Test-Path -LiteralPath $destination) {
+                        throw "Destination unexpectedly exists before rollback: $destination"
+                    }
+                    Move-Item -LiteralPath $oldDestination -Destination $destination -ErrorAction Stop
+                    if (-not (Test-Path -LiteralPath $destination)) { throw "Rollback directory was not restored: $destination" }
+                }
+            } catch {
+                $rollbackErrors.Add("Claude directory: $($_.Exception.Message)") | Out-Null
+            }
+            try {
+                if ($rootInstalled -and (Test-Path -LiteralPath $oldRoot)) {
+                    Restore-MigrationFile -CurrentPath $destinationRootJson -RollbackPath $oldRoot
+                } elseif ($rootMoved -and (Test-Path -LiteralPath $oldRoot)) {
+                    if (Test-Path -LiteralPath $destinationRootJson) {
+                        throw "Root configuration unexpectedly exists before rollback: $destinationRootJson"
+                    }
+                    Move-Item -LiteralPath $oldRoot -Destination $destinationRootJson -ErrorAction Stop
+                    if (-not (Test-Path -LiteralPath $destinationRootJson)) { throw "Rollback root configuration was not restored: $destinationRootJson" }
+                }
+            } catch {
+                $rollbackErrors.Add("Root configuration: $($_.Exception.Message)") | Out-Null
+            }
+            if ($rollbackErrors.Count -gt 0) {
+                throw "Migration commit failed and automatic rollback was incomplete. Original data remains under $rollbackDir. $($rollbackErrors -join '; ')"
+            }
+            throw $commitError
         }
         try {
             $manifest = "Migration time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`r`nSource: $sourceConfig`r`nCurrent-account rollback: $rollbackDir`r`nImported project files: $importedProjectFiles`r`n"
@@ -693,6 +825,7 @@ if (-not (Test-Path -LiteralPath $UserProfile)) {
 $UserProfile = Resolve-FullPath $UserProfile
 $targets = [System.Collections.Generic.List[string]]::new()
 $codeConfigDir = $null
+$rootMetadataCleanupFailed = $false
 
 if ($IncludeClaudeCli) {
     if ($PSBoundParameters.ContainsKey('Target') -and -not [string]::IsNullOrWhiteSpace($Target) -and $Target -notmatch '^(?i:code|c|claude-code|2)$') {
@@ -822,6 +955,9 @@ if ($Target -eq 'Code') {
     if ($codeConfigDir) {
         Add-Target -Targets $targets -Path (Join-Path $codeConfigDir '.credentials.json')
         Add-Target -Targets $targets -Path (Join-Path $codeConfigDir 'cache')
+        foreach ($name in @('settings.json', 'settings.local.json', 'config.json')) {
+            Add-Target -Targets $targets -Path (Join-Path $codeConfigDir $name)
+        }
     }
 }
 
@@ -837,6 +973,7 @@ if ($Target -eq 'Code' -and $codeConfigDir) {
     Write-Host 'Preserving Claude Code projects, conversations, settings, extensions, and .claude.json.'
     if (-not (Remove-ClaudeCodeRootAccountMetadata)) {
         Write-Warning 'Claude Code credentials and cache will still be cleared, but .claude.json account metadata could not be removed.'
+        $rootMetadataCleanupFailed = $true
     }
     if ($cleanupBackup) {
         Write-Host 'After signing in to the new account, run this same script again and choose option 3 to merge this backup.'
@@ -863,6 +1000,11 @@ if ($failedTargets.Count -gt 0) {
 
 if ($unsafeCleanupTargets.Count -gt 0) {
     Write-Error "Cleanup was not completed because unsafe paths were rejected: $($unsafeCleanupTargets -join '; ')"
+    exit 1
+}
+
+if ($rootMetadataCleanupFailed) {
+    Write-Error 'Cleanup was incomplete because .claude.json account metadata could not be safely removed.'
     exit 1
 }
 

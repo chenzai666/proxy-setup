@@ -232,7 +232,9 @@ proxy-setup/
 ├── setup_proxy_cmd.txt             # jsdelivr 可下载的 CMD 启动器镜像
 ├── setup_proxy.ps1                 # PowerShell 代理配置脚本
 ├── clear_claude_login_state.ps1        # Windows Claude 登录状态清理脚本
-└── clear_claude_login_state_macos.sh   # macOS Claude 登录状态清理脚本
+├── clear_claude_login_state_macos.sh   # macOS Claude 登录状态清理脚本
+├── migrate_claude_code_account_windows.ps1 # Windows Claude Code 账号数据迁移
+└── migrate_claude_code_account_macos.sh    # macOS Claude Code 账号数据迁移
 ```
 
 ## 仓库地址
@@ -414,6 +416,64 @@ bash clear_claude_login_state_macos.sh --target code
 如需额外清理浏览器/PWA 的 `claude.ai` IndexedDB/Storage，可在选择桌面端时加 `INCLUDE_BROWSER_SITE_DATA=1`。
 
 > CDN 可能有缓存延迟；需要立即使用最新版本时，请优先用 raw.githubusercontent 命令。
+
+## Claude Code 旧账号数据迁移
+
+用于把旧账号仍保存在本机或清理备份中的项目、会话和用户配置，安全合并到已经登录的新账号。脚本同时支持 Windows 和 macOS。
+
+迁移内容包括 `projects`、`sessions`、`history.jsonl`、`commands`、`agents`、`skills`、`plugins`、`todos`、`plans` 等本地工作数据，以及当前账号缺失的设置文件。旧账号的 `.credentials.json`、`cache`、`telemetry`、`oauthAccount`、`userID`、`machineID` 不会导入；同名文件冲突时保留当前新账号版本。
+
+迁移前会把当前账号的完整 `.claude` 目录移动到 `~/.claude-migration-backups/时间戳/current-claude`，提交失败时自动回滚。确认迁移正常前不要删除该回滚目录。已经被永久删除且没有任何备份的本地 JSONL 对话，以及云端 Cowork/Chat 数据，无法由本工具恢复。
+
+### Windows
+
+先登录新账号，再执行：
+
+```powershell
+$u='https://raw.githubusercontent.com/chenzai666/proxy-setup/master/migrate_claude_code_account_windows.ps1';$p="$env:TEMP\migrate_claude_code_account_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+```
+
+jsDelivr 加速版：
+
+```powershell
+$u='https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/migrate_claude_code_account_windows.ps1';$p="$env:TEMP\migrate_claude_code_account_windows.ps1";Invoke-WebRequest -UseBasicParsing $u -OutFile $p;powershell -NoProfile -ExecutionPolicy Bypass -File $p;Remove-Item $p -Force
+```
+
+未指定 `-Source` 时，脚本自动选择 `~/.claude-cleanup-backups` 下最新的备份。也可以指定旧 `.claude` 目录或包含 `.claude` 的备份目录：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\migrate_claude_code_account_windows.ps1 -Source "D:\backup\.claude"
+```
+
+预演不会停止进程或修改文件：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\migrate_claude_code_account_windows.ps1 -Source "D:\backup\.claude" -WhatIf
+```
+
+### macOS
+
+先登录新账号，再执行：
+
+```bash
+t="$(mktemp -t migrate_claude_code_account_macos.XXXXXX)" && trap 'rm -f "$t"' EXIT && curl -fsSL https://raw.githubusercontent.com/chenzai666/proxy-setup/master/migrate_claude_code_account_macos.sh -o "$t" && bash "$t"
+```
+
+jsDelivr 加速版：
+
+```bash
+t="$(mktemp -t migrate_claude_code_account_macos.XXXXXX)" && trap 'rm -f "$t"' EXIT && curl -4 --retry 3 --retry-delay 2 --connect-timeout 8 --max-time 30 -fsSL https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master/migrate_claude_code_account_macos.sh -o "$t" && bash "$t"
+```
+
+未指定 `--source` 时同样自动选择最新清理备份；手动指定旧数据和预演示例：
+
+```bash
+bash migrate_claude_code_account_macos.sh --source "/Volumes/Backup/.claude"
+bash migrate_claude_code_account_macos.sh --source "/Volumes/Backup/.claude" --dry-run
+```
+
+自动化运行可分别使用 Windows 的 `-Yes` 或 macOS 的 `--yes` 跳过确认。只有确实准备在未登录状态下迁移时，才使用 `-AllowLoggedOut` 或 `--allow-logged-out`。
+
 ## Claude Code 画像一致启动器
 
 `proxy-setup` 可以通过菜单安装一个 `claude-geo` 启动命令，用来让 Claude Code 的运行时画像尽量和当前代理出口 IP 保持一致。

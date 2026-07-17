@@ -7,6 +7,7 @@ INSTALL_URL="${CLAUDE_CODE_INSTALL_URL:-https://claude.ai/install.sh}"
 BIN_DIR="${CLAUDE_CODE_BIN_DIR:-$HOME/.local/bin}"
 RC_FILE="${CLAUDE_CODE_RC_FILE:-}"
 SKIP_INSTALL="${CLAUDE_CODE_SKIP_INSTALL:-0}"
+ALLOW_UNSAFE_SOURCE="${CLAUDE_CODE_ALLOW_UNSAFE_SOURCE:-0}"
 
 PATH_BLOCK_START="# >>> claude-code path >>>"
 PATH_BLOCK_END="# <<< claude-code path <<<"
@@ -19,7 +20,7 @@ err()  { printf '  \033[0;31m[ERR] %s\033[0m\n' "$1" >&2; }
 usage() {
     cat <<'EOF'
 Usage:
-  bash install_claude_code_linux.sh
+  bash install_claude_code_linux.sh [--allow-unsafe-source]
 
 Environment variables:
   CLAUDE_CODE_SKIP_INSTALL=1     Only repair the claude command and PATH.
@@ -28,7 +29,26 @@ Environment variables:
   CLAUDE_CODE_BIN_DIR=PATH       Directory for the claude symlink.
                                  Default: ~/.local/bin
   CLAUDE_CODE_INSTALL_URL=URL    Override the official installer URL.
+  CLAUDE_CODE_ALLOW_UNSAFE_SOURCE=1  Permit a custom installer source after verification.
 EOF
+}
+
+is_truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|y|Y) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+assert_trusted_install_source() {
+    local official_url="https://claude.ai/install.sh"
+    [[ "$INSTALL_URL" == "$official_url" ]] && return 0
+    if is_truthy "$ALLOW_UNSAFE_SOURCE"; then
+        warn "Using explicitly authorized custom installer source: $INSTALL_URL"
+        return 0
+    fi
+    err "Custom installer sources are disabled. Set CLAUDE_CODE_ALLOW_UNSAFE_SOURCE=1 only after verifying the source."
+    return 1
 }
 
 require_linux() {
@@ -103,6 +123,8 @@ run_installer() {
         err "curl is required but was not found."
         exit 1
     }
+
+    assert_trusted_install_source || return 1
 
     local tmp
     tmp="$(mktemp "/tmp/claude-code-install.XXXXXX.sh")"
@@ -246,10 +268,14 @@ verify_install() {
 }
 
 main() {
-    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-        usage
-        exit 0
-    fi
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage; exit 0 ;;
+            --allow-unsafe-source) ALLOW_UNSAFE_SOURCE=1 ;;
+            *) err "Unknown argument: $1"; usage; exit 2 ;;
+        esac
+        shift
+    done
 
     require_linux
     if [[ "$SKIP_INSTALL" != "1" && "$SKIP_INSTALL" != "true" ]]; then

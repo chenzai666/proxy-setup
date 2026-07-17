@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # Dispatch to the platform-specific Bash proxy setup script.
 
-set -euo pipefail
-
 _PROXY_SOURCED=0
-[[ "${BASH_SOURCE[0]}" != "$0" ]] && _PROXY_SOURCED=1
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    _PROXY_SOURCED=1
+else
+    set -euo pipefail
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
+RAW_REMOTE_BASE_URL="https://raw.githubusercontent.com/chenzai666/proxy-setup/master"
+CDN_REMOTE_BASE_URL="https://cdn.jsdelivr.net/gh/chenzai666/proxy-setup@master"
+LEGACY_REMOTE_BASE_URL=""
 
 is_truthy() {
     case "${1:-}" in
@@ -26,11 +31,37 @@ is_temp_script_dir() {
 should_refresh_platform_script() {
     local local_script=$1
     [[ ! -f "$local_script" ]] && return 0
-    [[ -n "${PROXY_SETUP_REMOTE_BASE_URL:-}" ]] && return 0
+    [[ -n "$LEGACY_REMOTE_BASE_URL" ]] && return 0
     is_truthy "${PROXY_SETUP_FORCE_DOWNLOAD:-}" && return 0
     is_temp_script_dir && return 0
     return 1
 }
+
+remote_base_url() {
+    if [[ -n "$LEGACY_REMOTE_BASE_URL" ]]; then
+        printf '%s\n' "$LEGACY_REMOTE_BASE_URL"
+    elif is_truthy "${PROXY_SETUP_USE_CDN:-}"; then
+        printf '%s\n' "$CDN_REMOTE_BASE_URL"
+    else
+        printf '%s\n' "$RAW_REMOTE_BASE_URL"
+    fi
+}
+
+if [[ -n "${PROXY_SETUP_REMOTE_BASE_URL:-}" ]]; then
+    case "${PROXY_SETUP_REMOTE_BASE_URL%/}" in
+        "$RAW_REMOTE_BASE_URL"|"$CDN_REMOTE_BASE_URL")
+            LEGACY_REMOTE_BASE_URL="${PROXY_SETUP_REMOTE_BASE_URL%/}"
+            ;;
+        *)
+            echo "PROXY_SETUP_REMOTE_BASE_URL only accepts the built-in GitHub or jsDelivr URL." >&2
+            if [[ "$_PROXY_SOURCED" == "1" ]]; then
+                # Do not terminate the caller's interactive shell when this file is sourced.
+                return 0
+            fi
+            exit 2
+            ;;
+    esac
+fi
 
 run_platform_script() {
     local script_name=$1
@@ -38,14 +69,7 @@ run_platform_script() {
     local local_script="$SCRIPT_DIR/$script_name"
 
     if should_refresh_platform_script "$local_script"; then
-        local bases=()
-        if [[ -n "${PROXY_SETUP_REMOTE_BASE_URL:-}" ]]; then
-            bases+=("${PROXY_SETUP_REMOTE_BASE_URL%/}")
-        else
-            bases+=(
-                "https://raw.githubusercontent.com/chenzai666/proxy-setup/master"
-            )
-        fi
+        local bases=("$(remote_base_url)")
 
         if ! command -v curl >/dev/null 2>&1; then
             echo "Script not found: $local_script" >&2

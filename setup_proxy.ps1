@@ -323,6 +323,17 @@ function Test-CmdAutoRunManaged([string]$Value, [string]$BatPath) {
     return $Value.IndexOf($BatPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
+function Test-CmdAutoRunLegacyManaged([string]$Value, [string]$BatPath) {
+    $candidate = $Value.Trim()
+    $knownValues = @(
+        $BatPath,
+        "`"$BatPath`"",
+        "call $BatPath",
+        "call `"$BatPath`""
+    )
+    return $knownValues -contains $candidate
+}
+
 function Get-ClaudeGeoDir {
     return (Join-Path $env:USERPROFILE ".proxy-setup")
 }
@@ -363,6 +374,22 @@ function Build-ProxyBlock($http_port, $socks5_port) {
     return ($lines -join "`r`n") + "`r`n"
 }
 
+function Set-ProfileTextSafely([string]$Path, [string]$Content) {
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null }
+    $tmp = Join-Path $dir (".{0}.{1}.tmp" -f (Split-Path -Leaf $Path), [guid]::NewGuid().ToString("N"))
+    try {
+        [System.IO.File]::WriteAllText($tmp, $Content, [System.Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $Path) {
+            [System.IO.File]::Replace($tmp, $Path, "$Path.proxy-bak", $true)
+        } else {
+            [System.IO.File]::Move($tmp, $Path)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Write-Profile($http_port, $socks5_port) {
     $rc = Get-ProfilePath
     $dir = Split-Path $rc -Parent
@@ -387,14 +414,14 @@ function Write-Profile($http_port, $socks5_port) {
             $firstIndex = $blockMatches[0].Index
             $withoutBlocks = $regex.Replace($content, "")
             $newContent = $withoutBlocks.Insert($firstIndex, $block)
-            Set-Content -Path $rc -Value $newContent -Encoding UTF8
+            Set-ProfileTextSafely $rc $newContent
             ok "已更新 $rc"
         } else {
-            Add-Content -Path $rc -Value "`r`n$block" -Encoding UTF8
+            Set-ProfileTextSafely $rc ($content + "`r`n" + $block)
             ok "已追加到 $rc"
         }
     } else {
-        Set-Content -Path $rc -Value $block -Encoding UTF8
+        Set-ProfileTextSafely $rc $block
         ok "已创建 $rc 并写入代理配置"
     }
 
@@ -434,6 +461,10 @@ function Setup-CmdAutoRun($http_port, $socks5_port) {
         if ($current.Exists -and (Test-CmdAutoRunManaged $current.Value $bat)) {
             if ($backup.Applied -and $current.Value -ceq $backup.Applied) {
                 ok "CMD AutoRun 已包含代理初始化脚本"
+            } elseif (-not $backup.Applied -and -not $backup.State -and (Test-CmdAutoRunLegacyManaged $current.Value $bat)) {
+                Save-CmdAutoRunBackup "absent"
+                Save-CmdAutoRunApplied $current.Value
+                ok "CMD AutoRun 已识别为旧版代理初始化配置，已补充归属记录"
             } else {
                 warn "CMD AutoRun 包含代理初始化脚本，但值已被其他程序修改；仅更新批处理文件，不接管该值"
             }
@@ -858,11 +889,11 @@ function Install-ClaudeGeoLauncher($http_port, $socks5_port) {
             $firstIndex = $blockMatches[0].Index
             $withoutBlocks = $regex.Replace($content, "")
             $content = $withoutBlocks.Insert($firstIndex, $block)
-            Set-Content -Path $rc -Value $content -Encoding UTF8 -ErrorAction Stop
+            Set-ProfileTextSafely $rc $content
         } elseif ($null -ne $content) {
-            Add-Content -Path $rc -Value "`r`n$block" -Encoding UTF8 -ErrorAction Stop
+            Set-ProfileTextSafely $rc ($content + "`r`n" + $block)
         } else {
-            Set-Content -Path $rc -Value $block -Encoding UTF8 -ErrorAction Stop
+            Set-ProfileTextSafely $rc $block
         }
         Add-ClaudeGeoDirToUserPath
     } catch {
@@ -893,7 +924,7 @@ function Remove-ClaudeGeoLauncher {
             return $false
         } elseif ($blockMatches.Count -gt 0) {
             try {
-                Set-Content -Path $rc -Value ($regex.Replace($content, "")) -Encoding UTF8 -ErrorAction Stop
+                Set-ProfileTextSafely $rc ($regex.Replace($content, ""))
             } catch {
                 warn "从 $rc 移除 claude-geo 命令失败: $_"
                 return $false
@@ -925,26 +956,36 @@ function Ensure-PowerShellExecutionPolicy {
     try {
         $machinePolicy = Get-ExecutionPolicy -Scope MachinePolicy -ErrorAction SilentlyContinue
         $userPolicy = Get-ExecutionPolicy -Scope UserPolicy -ErrorAction SilentlyContinue
-
-        if ($machinePolicy -and $machinePolicy -ne "Undefined") {
-            warn "PowerShell 执行策略受 MachinePolicy 管理 ($machinePolicy)，无法自动修改"
-            return
-        }
-        if ($userPolicy -and $userPolicy -ne "Undefined") {
-            warn "PowerShell 执行策略受 UserPolicy 管理 ($userPolicy)，无法自动修改"
+        if (($machinePolicy -and $machinePolicy -ne "Undefined") -or ($userPolicy -and $userPolicy -ne "Undefined")) {
+            warn "PowerShell 执行策略受组策略管理，脚本不会自动修改"
             return
         }
 
         $current = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue
-        if ($current -in @("RemoteSigned", "Unrestricted", "Bypass")) {
-            ok "PowerShell 执行策略: CurrentUser $current"
+        if (-not $current -or $current -eq "Undefined") {
+            $localMachine = Get-ExecutionPolicy -Scope LocalMachine -ErrorAction SilentlyContinue
+            if ($localMachine -in @("AllSigned", "Restricted")) {
+                warn "PowerShell 执行策略由 LocalMachine $localMachine 配置，脚本不会覆盖"
+                return
+            }
+
+            $effective = Get-ExecutionPolicy -ErrorAction SilentlyContinue
+            if ($effective -in @("Restricted", "Undefined")) {
+                Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction Stop
+                ok "PowerShell 执行策略已初始化: CurrentUser RemoteSigned"
+            } else {
+                ok "PowerShell 执行策略: $effective"
+            }
             return
         }
 
-        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction Stop
-        ok "PowerShell 执行策略已设置: CurrentUser RemoteSigned"
+        if ($current -in @("AllSigned", "Restricted")) {
+            warn "PowerShell 执行策略保持为 CurrentUser $current；脚本不会降低显式安全策略。"
+        } else {
+            ok "PowerShell 执行策略: CurrentUser $current"
+        }
     } catch {
-        warn "PowerShell 执行策略设置失败: $_"
+        warn "PowerShell 执行策略初始化失败: $_"
     }
 }
 
@@ -1064,7 +1105,7 @@ function Remove-Proxy {
             $allOk = $false
         } elseif ($blockMatches.Count -gt 0) {
             $newContent = $regex.Replace($content, "")
-            Set-Content -Path $rc -Value $newContent -Encoding UTF8
+            Set-ProfileTextSafely $rc $newContent
             ok "已从 $rc 移除代理配置"
         }
     }

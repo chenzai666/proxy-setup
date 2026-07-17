@@ -25,6 +25,8 @@ param(
 
     [string]$InstallUrl = $(if ($env:CLAUDE_CODE_INSTALL_URL) { $env:CLAUDE_CODE_INSTALL_URL } else { 'https://claude.ai/install.ps1' }),
 
+    [switch]$AllowUnsafeInstallSource,
+
     [switch]$SkipInstall,
 
     [switch]$NoPathUpdate
@@ -40,6 +42,18 @@ function Fail($Message) { Write-Host "  [ERR] $Message" -ForegroundColor Red }
 function Test-Truthy($Value) {
     if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
     return $Value -match '^(1|true|yes|y)$'
+}
+
+function Assert-TrustedInstallSource {
+    param([string]$Url)
+
+    $officialUrl = 'https://claude.ai/install.ps1'
+    if ($Url -eq $officialUrl) { return }
+    if ($AllowUnsafeInstallSource.IsPresent -or (Test-Truthy $env:CLAUDE_CODE_ALLOW_UNSAFE_SOURCE)) {
+        Warn "Using explicitly authorized custom installer source: $Url"
+        return
+    }
+    throw 'Custom installer sources are disabled. Use -AllowUnsafeInstallSource or CLAUDE_CODE_ALLOW_UNSAFE_SOURCE=1 only after verifying the source.'
 }
 
 function Require-Windows {
@@ -178,6 +192,7 @@ function Invoke-ProcessWithHeartbeat {
 function Invoke-NativeInstall {
     param([string]$Url)
 
+    Assert-TrustedInstallSource $Url
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("claude-code-install-{0}.ps1" -f ([guid]::NewGuid().ToString('N')))
     try {
         Info "Downloading Claude Code installer: $Url"

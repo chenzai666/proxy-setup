@@ -19,22 +19,6 @@ REM 2) Parent folder
 if not defined FOUND_PS if exist "%~dp0..\setup_proxy.ps1" set "FOUND_PS=%~dp0..\setup_proxy.ps1"
 if not defined FOUND_PY if exist "%~dp0..\setup_proxy.py" set "FOUND_PY=%~dp0..\setup_proxy.py"
 
-REM 3) Downloads
-if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\setup_proxy.ps1"
-if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\setup_proxy.py"
-if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\proxy-setup\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\proxy-setup\setup_proxy.ps1"
-if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\proxy-setup\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\proxy-setup\setup_proxy.py"
-if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.ps1"
-if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\proxy-setup-master\setup_proxy.py"
-if not defined FOUND_PS if exist "%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.ps1"
-if not defined FOUND_PY if exist "%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Downloads\proxy-setup-main\setup_proxy.py"
-
-REM 4) Desktop
-if not defined FOUND_PS if exist "%USERPROFILE%\Desktop\proxy-setup\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Desktop\proxy-setup\setup_proxy.ps1"
-if not defined FOUND_PY if exist "%USERPROFILE%\Desktop\proxy-setup\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Desktop\proxy-setup\setup_proxy.py"
-if not defined FOUND_PS if exist "%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.ps1" set "FOUND_PS=%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.ps1"
-if not defined FOUND_PY if exist "%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.py" set "FOUND_PY=%USERPROFILE%\Desktop\proxy-setup-master\setup_proxy.py"
-
 if defined FOUND_PS goto :found_ps
 if defined FOUND_PY goto :found_py
 
@@ -54,6 +38,12 @@ echo   Or enter the full path to your proxy-setup folder:
 echo.
 set /p "FOLDER=  Path: "
 if not defined FOLDER goto :done
+set "FOLDER=%FOLDER:"=%"
+call :is_absolute_path "%FOLDER%"
+if errorlevel 1 (
+    echo   Please enter an absolute path, for example: C:\proxy-setup
+    goto :done
+)
 if "%FOLDER:~-1%"=="\" set "FOLDER=%FOLDER:~0,-1%"
 
 if exist "%FOLDER%\setup_proxy.ps1" set "FOUND_PS=%FOLDER%\setup_proxy.ps1" & goto :found_ps
@@ -113,3 +103,10 @@ python3 "%FOUND_PY%"
 :done
 echo.
 pause
+exit /b
+
+:is_absolute_path
+set "INPUT_PATH=%~1"
+if "%INPUT_PATH:~0,2%"=="\\" exit /b 0
+if "%INPUT_PATH:~1,1%"==":" if "%INPUT_PATH:~2,1%"=="\" exit /b 0
+exit /b 1

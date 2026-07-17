@@ -14,6 +14,7 @@ import ipaddress
 import subprocess
 import shutil
 import platform
+import tempfile
 from pathlib import Path
 
 # ─── 配置区（按需修改）───────────────────────────────────────────────
@@ -419,14 +420,13 @@ def write_rc_file(rc_file: Path, http_port: int, socks5_port: int):
         )
         if pattern.search(content):
             new_content = pattern.sub(block, content)
-            rc_file.write_text(new_content, encoding="utf-8")
+            write_profile_text_safely(rc_file, new_content)
             ok(f"已更新 {rc_file}")
         else:
-            with open(rc_file, "a", encoding="utf-8") as f:
-                f.write(f"\n{block}")
+            write_profile_text_safely(rc_file, f"{content}\n{block}")
             ok(f"已追加到 {rc_file}")
     else:
-        rc_file.write_text(block, encoding="utf-8")
+        write_profile_text_safely(rc_file, block)
         ok(f"已创建 {rc_file} 并写入代理配置")
 
     # Windows: 同时写入 CMD AutoRun 批处理
@@ -437,6 +437,27 @@ def write_rc_file(rc_file: Path, http_port: int, socks5_port: int):
 def get_cmd_bat_path() -> Path:
     """CMD AutoRun 批处理文件路径"""
     return Path.home() / ".proxy_init.cmd"
+
+
+def write_profile_text_safely(path: Path, content: str):
+    """Back up and atomically replace a shell or PowerShell profile."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existed = path.exists()
+    mode = (path.stat().st_mode & 0o777) if existed else 0o600
+    if existed:
+        shutil.copy2(path, path.with_name(f"{path.name}.proxy-bak"))
+
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_path, mode)
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _read_registry_value(key_path: str, value_name: str) -> tuple[bool, str]:
@@ -657,7 +678,7 @@ def remove_proxy(rc_file: Path):
             re.DOTALL
         )
         new_content = pattern.sub("", content)
-        rc_file.write_text(new_content, encoding="utf-8")
+        write_profile_text_safely(rc_file, new_content)
         ok(f"已从 {rc_file} 移除代理配置")
 
     # Windows: 同时清除 CMD AutoRun

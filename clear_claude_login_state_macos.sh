@@ -5,7 +5,8 @@ set -euo pipefail
 # current macOS user. If no target is provided, the script asks whether to
 # clean or migrate a previous Claude Code backup after signing in to a new
 # account.
-# Claude Code mode preserves projects, conversations, settings, and extensions.
+# Claude Code mode backs up projects, conversations, settings, and extensions.
+# Settings are restored only with the explicit, sanitized migration option.
 # This does not uninstall Claude.app.
 #
 # Usage:
@@ -14,6 +15,7 @@ set -euo pipefail
 #   TARGET=code bash clear_claude_login_state_macos.sh
 #   bash clear_claude_login_state_macos.sh --target code
 #   bash clear_claude_login_state_macos.sh --target migrate --yes
+#   bash clear_claude_login_state_macos.sh --target migrate --include-settings --yes
 
 dry_run="${DRY_RUN:-0}"
 target="${TARGET:-}"
@@ -22,6 +24,7 @@ include_browser_site_data="${INCLUDE_BROWSER_SITE_DATA:-0}"
 migration_source="${MIGRATION_SOURCE:-}"
 assume_yes="${ASSUME_YES:-0}"
 allow_logged_out="${ALLOW_LOGGED_OUT:-0}"
+include_settings="${INCLUDE_SETTINGS:-0}"
 cleanup_failures=()
 
 home_dir="${HOME:?HOME is not set}"
@@ -54,8 +57,12 @@ Environment:
   MIGRATION_SOURCE=PATH           Old .claude directory or cleanup backup directory.
   ASSUME_YES=1                    Skip migration confirmation.
   ALLOW_LOGGED_OUT=1              Permit migration without a detected current login.
+  INCLUDE_SETTINGS=1              Merge sanitized settings during target=migrate.
   INCLUDE_BROWSER_SITE_DATA=1   Only applies to target=desktop.
   INCLUDE_CLAUDE_CLI=1          Deprecated alias for target=code.
+
+Options:
+  --include-settings              Merge sanitized settings.json and settings.local.json.
 EOF
 }
 
@@ -402,6 +409,62 @@ merge_migration_history() {
   mv "$temporary" "$target_file"
 }
 
+merge_migration_settings() {
+  local source_file="$1" target_file="$2" temporary
+  [ -f "$source_file" ] || return 0
+  if [ -e "$target_file" ] || [ -L "$target_file" ]; then
+    assert_no_migration_symlinks "$target_file" || return 1
+  fi
+  if ! command -v osascript >/dev/null 2>&1; then
+    say "Warning: osascript is unavailable; could not merge sanitized settings: $source_file"
+    return 1
+  fi
+  temporary="$target_file.migration-$$-$RANDOM.tmp"
+  if ! osascript -l JavaScript - "$source_file" "$target_file" "$temporary" <<'JXA'
+ObjC.import('Foundation');
+function readJson(path) {
+  const fm = $.NSFileManager.defaultManager;
+  if (!fm.fileExistsAtPath(path)) return {};
+  const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
+  const value = JSON.parse(ObjC.unwrap(text));
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Settings must be a JSON object');
+  return value;
+}
+function sensitiveKey(key) {
+  return /^(mcpservers?|.*(token|secret|password|credential|authorization|cookie|api[_-]?key|auth|headers?).*)$/i.test(key);
+}
+function sanitize(value) {
+  if (Array.isArray(value)) return value.map(sanitize);
+  if (!value || typeof value !== 'object') return value;
+  const result = {};
+  Object.keys(value).forEach(function (key) {
+    if (!sensitiveKey(key)) result[key] = sanitize(value[key]);
+  });
+  return result;
+}
+function mergeNoClobber(source, destination) {
+  Object.keys(source).forEach(function (key) {
+    if (!(key in destination)) destination[key] = source[key];
+    else if (source[key] && destination[key] && typeof source[key] === 'object' && typeof destination[key] === 'object' && !Array.isArray(source[key]) && !Array.isArray(destination[key])) mergeNoClobber(source[key], destination[key]);
+  });
+  return destination;
+}
+function run(argv) {
+  const source = sanitize(readJson(argv[0]));
+  const destination = readJson(argv[1]);
+  const output = $(JSON.stringify(mergeNoClobber(source, destination), null, 2) + '\n');
+  if (!output.writeToFileAtomicallyEncodingError(argv[2], true, $.NSUTF8StringEncoding, null)) throw new Error('Failed to write merged settings');
+}
+JXA
+  then
+    rm -f "$temporary"
+    say "Warning: could not merge sanitized settings: $source_file"
+    return 1
+  fi
+  chmod 600 "$temporary" 2>/dev/null || true
+  mv "$temporary" "$target_file"
+}
+
 restore_migration_directory() {
   local current_path="$1" rollback_path="$2"
   if [ -e "$current_path" ] || [ -L "$current_path" ]; then
@@ -424,10 +487,10 @@ restore_migration_file() {
 
 migrate_claude_code_data() {
   local source_input="$migration_source" source_path source_config="" source_root_json="" source_parent
-  local destination rollback_root candidate_root merge_dirs copy_if_missing_files name has_importable=0
+  local destination rollback_root candidate_root merge_dirs copy_if_missing_files settings_files name has_importable=0
   local current_login_found=0 source_project_files destination_project_files destination_parent destination_name
   local stage root_stage timestamp rollback_dir destination_root_json root_merge_ready=0 stage_project_files imported_project_files
-  local destination_moved=0 destination_installed=0 root_moved=0 root_installed=0 answer
+  local destination_moved=0 destination_installed=0 root_moved=0 root_installed=0 settings_merged=0 answer
 
   destination="$(get_claude_code_config_dir)" || {
     say "Unsafe CLAUDE_CONFIG_DIR was rejected; migration skipped: ${CLAUDE_CONFIG_DIR:-$home_dir/.claude}"
@@ -470,6 +533,7 @@ migrate_claude_code_data() {
   case "$source_config/" in "$destination"/*) say "Migration source cannot be inside the current Claude Code directory."; return 1 ;; esac
 
   merge_dirs=(projects sessions commands agents skills plugins backups session-env shell-snapshots todos plans)
+  settings_files=(settings.json settings.local.json)
   # Settings and MCP configuration can carry old credentials, headers, or
   # router endpoints. Only import project guidance, never runtime settings.
   copy_if_missing_files=(CLAUDE.md)
@@ -480,11 +544,16 @@ migrate_claude_code_data() {
   for name in "${merge_dirs[@]}" "${copy_if_missing_files[@]}" history.jsonl; do
     assert_no_migration_symlinks "$source_config/$name" || return 1
   done
+  if [ "$include_settings" = "1" ]; then
+    for name in "${settings_files[@]}"; do
+      assert_no_migration_symlinks "$source_config/$name" || return 1
+    done
+  fi
 
   if [ -f "$destination/.credentials.json" ] || [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] || [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
     current_login_found=1
   elif command -v security >/dev/null 2>&1; then
-    for name in "Claude Code-credentials" "Claude Code OAuth" "claude-code"; do
+    for name in "Claude Code-credentials" "Claude Code" "Claude Code OAuth" "claude-code"; do
       if security find-generic-password -s "$name" >/dev/null 2>&1; then current_login_found=1; break; fi
     done
   fi
@@ -500,6 +569,11 @@ migrate_claude_code_data() {
   say "  Current login: $([ "$current_login_found" -eq 1 ] && printf 'detected and preserved' || printf 'not detected')"
   say "Source credentials, cache, telemetry, oauthAccount, userID, and machineID are never imported."
   say "Current-account files win on conflict; old data fills only missing files."
+  if [ "$include_settings" = "1" ]; then
+    say "Sanitized settings.json and settings.local.json will be merged; config.json and MCP settings are never imported."
+  else
+    say "Settings were backed up but will not be migrated. Use --include-settings to opt in to a sanitized settings merge."
+  fi
   if [ "$current_login_found" -ne 1 ] && [ "$allow_logged_out" != "1" ]; then
     say "No current-account login was detected. Sign in first or explicitly use --allow-logged-out."
     return 1
@@ -564,6 +638,13 @@ migrate_claude_code_data() {
     [ -f "$source_config/$name" ] && [ ! -e "$stage/$name" ] && cp -p "$source_config/$name" "$stage/$name"
   done
   merge_migration_history "$source_config/history.jsonl" "$stage/history.jsonl"
+  if [ "$include_settings" = "1" ]; then
+    for name in "${settings_files[@]}"; do
+      [ -f "$source_config/$name" ] || continue
+      merge_migration_settings "$source_config/$name" "$stage/$name" || return 1
+      settings_merged=$((settings_merged + 1))
+    done
+  fi
 
   destination_root_json="$(safe_user_profile_path "$home_dir/.claude.json")" || {
     say "Unsafe .claude.json path was rejected."
@@ -624,6 +705,7 @@ Migration time: $(date '+%Y-%m-%d %H:%M:%S')
 Source: $source_config
 Current-account rollback: $rollback_dir
 Imported project files: $imported_project_files
+Sanitized settings files merged: $settings_merged
 EOF
   then
     say "Warning: migration succeeded, but the rollback note could not be written."
@@ -633,6 +715,7 @@ EOF
   trap - EXIT INT TERM
   cleanup_migration_temps
   say "Migration complete. Imported project files: $imported_project_files"
+  if [ "$include_settings" = "1" ]; then say "Sanitized settings files merged: $settings_merged"; fi
   say "Rollback snapshot: $rollback_dir"
 }
 
@@ -679,6 +762,10 @@ while [ "$#" -gt 0 ]; do
       allow_logged_out="1"
       shift
       ;;
+    --include-settings)
+      include_settings="1"
+      shift
+      ;;
     --dry-run)
       dry_run="1"
       shift
@@ -718,6 +805,11 @@ fi
 
 if [ "$target" = "code" ] && [ "$include_browser_site_data" = "1" ]; then
   say "INCLUDE_BROWSER_SITE_DATA=1 only applies to TARGET=desktop and will be ignored."
+fi
+
+if [ "$include_settings" = "1" ] && [ "$target" != "migrate" ]; then
+  say "--include-settings only applies to target=migrate."
+  exit 2
 fi
 
 if [ "$target" = "migrate" ]; then
@@ -792,7 +884,7 @@ if [ "$target" = "code" ]; then
   fi
 
   backup_claude_code_user_data "$code_config_dir"
-  say "Preserving Claude Code projects, conversations, settings, extensions, and .claude.json."
+  say "Backing up Claude Code projects, conversations, settings, extensions, and .claude.json."
   if ! remove_claude_code_root_account_metadata; then
     say "Warning: credentials and cache will still be cleared, but .claude.json account metadata could not be removed."
     record_cleanup_failure ".claude.json account metadata"

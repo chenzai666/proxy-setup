@@ -7,8 +7,9 @@ When -Target is not supplied, the script asks whether to clean Claude Desktop,
 clean Claude Code, or migrate a previous Claude Code backup after signing in to
 a new account. Desktop mode removes only per-user Claude Desktop/Electron app
 data such as cookies, local storage, IndexedDB, cache, and Crashpad state. Code
-mode removes only Claude Code credentials and explicit cache data. It preserves
-projects, conversation history, settings, extensions, and .claude.json.
+ mode removes only Claude Code credentials and explicit cache data. It backs up
+ projects, conversation history, settings, extensions, and .claude.json. During
+ migration, settings require -IncludeSettings and are sanitized before merging.
 
 It does not uninstall Claude and does not delete files outside the selected
 Windows user profile.
@@ -26,6 +27,9 @@ Run with -WhatIf first if you want to preview what will be removed.
 
 .EXAMPLE
 .\clear_claude_login_state.ps1 -Target Migrate -UserProfile $env:USERPROFILE -Yes
+
+.EXAMPLE
+.\clear_claude_login_state.ps1 -Target Migrate -IncludeSettings -UserProfile $env:USERPROFILE -Yes
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
@@ -39,6 +43,8 @@ param(
     [switch]$Yes,
 
     [switch]$AllowLoggedOut,
+
+    [switch]$IncludeSettings,
 
     [switch]$IncludeClaudeCli,
 
@@ -574,6 +580,68 @@ function New-MergedClaudeCodeRootConfig {
     [System.IO.File]::WriteAllText($OutputFile, $serializer.Serialize($destinationObject), [System.Text.UTF8Encoding]::new($false))
 }
 
+function Test-SensitiveMigrationSettingsKey {
+    param([Parameter(Mandatory = $true)][string]$Key)
+
+    return $Key -match '(?i)^(mcpservers?|.*(token|secret|password|credential|authorization|cookie|api[_-]?key|auth|headers?).*)$'
+}
+
+function ConvertTo-SanitizedMigrationSettingsValue {
+    param($Value)
+
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $sanitized = [System.Collections.Generic.Dictionary[string, object]]::new()
+        foreach ($key in $Value.Keys) {
+            $name = [string]$key
+            if (Test-SensitiveMigrationSettingsKey -Key $name) { continue }
+            $sanitized[$name] = ConvertTo-SanitizedMigrationSettingsValue -Value $Value[$key]
+        }
+        return $sanitized
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = [System.Collections.Generic.List[object]]::new()
+        foreach ($item in $Value) {
+            $items.Add((ConvertTo-SanitizedMigrationSettingsValue -Value $item)) | Out-Null
+        }
+        return ,($items.ToArray())
+    }
+    return $Value
+}
+
+function New-MergedClaudeCodeSettings {
+    param([Parameter(Mandatory = $true)][string]$SourceFile, [Parameter(Mandatory = $true)][string]$DestinationFile, [Parameter(Mandatory = $true)][string]$OutputFile)
+
+    Add-Type -AssemblyName System.Web.Extensions
+    $serializer = [System.Web.Script.Serialization.JavaScriptSerializer]::new()
+    $serializer.MaxJsonLength = [int]::MaxValue
+    try {
+        $source = $serializer.DeserializeObject([System.IO.File]::ReadAllText($SourceFile, [System.Text.UTF8Encoding]::new($false)))
+    } catch {
+        throw "Could not parse source settings '$SourceFile': $($_.Exception.Message)"
+    }
+    if (-not ($source -is [System.Collections.IDictionary])) {
+        throw "Source settings must be a JSON object: $SourceFile"
+    }
+
+    if (Test-Path -LiteralPath $DestinationFile) {
+        try {
+            $destination = $serializer.DeserializeObject([System.IO.File]::ReadAllText($DestinationFile, [System.Text.UTF8Encoding]::new($false)))
+        } catch {
+            throw "Could not parse current settings '$DestinationFile': $($_.Exception.Message)"
+        }
+        if (-not ($destination -is [System.Collections.IDictionary])) {
+            throw "Current settings must be a JSON object: $DestinationFile"
+        }
+    } else {
+        $destination = [System.Collections.Generic.Dictionary[string, object]]::new()
+    }
+
+    $sanitizedSource = ConvertTo-SanitizedMigrationSettingsValue -Value $source
+    Merge-MigrationDictionary -SourceMap $sanitizedSource -DestinationMap $destination
+    [System.IO.File]::WriteAllText($OutputFile, $serializer.Serialize($destination), [System.Text.UTF8Encoding]::new($false))
+}
+
 function Restore-MigrationDirectory {
     param(
         [Parameter(Mandatory = $true)][string]$CurrentPath,
@@ -646,6 +714,7 @@ function Invoke-ClaudeCodeDataMigration {
     }
 
     $mergeDirectories = @('projects', 'sessions', 'commands', 'agents', 'skills', 'plugins', 'backups', 'session-env', 'shell-snapshots', 'todos', 'plans')
+    $settingsFiles = @('settings.json', 'settings.local.json')
     # Settings and MCP configuration can contain tokens, headers, or old router
     # endpoints. Only carry project guidance, never account/runtime configuration.
     $missingOnlyFiles = @('CLAUDE.md')
@@ -654,7 +723,9 @@ function Invoke-ClaudeCodeDataMigration {
         if (Test-Path -LiteralPath (Join-Path $sourceConfig $name)) { $hasImportable = $true; break }
     }
     if (-not $hasImportable) { throw 'Migration source contains no supported Claude Code work data.' }
-    foreach ($name in $mergeDirectories + $missingOnlyFiles + @('history.jsonl')) {
+    $sourceChecks = $mergeDirectories + $missingOnlyFiles + @('history.jsonl')
+    if ($IncludeSettings) { $sourceChecks += $settingsFiles }
+    foreach ($name in $sourceChecks) {
         Assert-NoMigrationReparsePoints -Path (Join-Path $sourceConfig $name)
     }
 
@@ -673,6 +744,11 @@ function Invoke-ClaudeCodeDataMigration {
     Write-Host "  Current login: $(if ($currentLoginFound) { 'detected and preserved' } else { 'not detected' })"
     Write-Host 'Source credentials, cache, telemetry, oauthAccount, userID, and machineID are never imported.'
     Write-Host 'Current-account files win on conflict; old data fills only missing files.'
+    if ($IncludeSettings) {
+        Write-Host 'Sanitized settings.json and settings.local.json will be merged; config.json and MCP settings are never imported.'
+    } else {
+        Write-Host 'Settings were backed up but will not be migrated. Use -IncludeSettings to opt in to a sanitized settings merge.'
+    }
     if (-not $currentLoginFound -and -not $AllowLoggedOut) {
         throw 'No current-account login was detected. Sign in to the new account first, or explicitly use -AllowLoggedOut.'
     }
@@ -718,6 +794,25 @@ function Invoke-ClaudeCodeDataMigration {
             if ((Test-Path -LiteralPath $sourceFile) -and -not (Test-Path -LiteralPath $targetFile)) { Copy-Item -LiteralPath $sourceFile -Destination $targetFile -Force }
         }
         Merge-MigrationHistoryFile -SourceFile (Join-Path $sourceConfig 'history.jsonl') -TargetFile (Join-Path $stage 'history.jsonl')
+        $mergedSettings = 0
+        if ($IncludeSettings) {
+            foreach ($name in $settingsFiles) {
+                $sourceFile = Join-Path $sourceConfig $name
+                if (-not (Test-Path -LiteralPath $sourceFile)) { continue }
+                $targetFile = Join-Path $stage $name
+                if (Test-Path -LiteralPath $targetFile) {
+                    Assert-NoMigrationReparsePoints -Path $targetFile
+                }
+                $settingsStage = "$targetFile.migration-$([guid]::NewGuid().ToString('N')).tmp"
+                try {
+                    New-MergedClaudeCodeSettings -SourceFile $sourceFile -DestinationFile $targetFile -OutputFile $settingsStage
+                    Move-Item -LiteralPath $settingsStage -Destination $targetFile -Force
+                    $mergedSettings++
+                } finally {
+                    if (Test-Path -LiteralPath $settingsStage) { Remove-Item -LiteralPath $settingsStage -Force -ErrorAction SilentlyContinue }
+                }
+            }
+        }
 
         $destinationRootJson = Assert-SafeUserProfilePath -Path (Join-Path $UserProfile '.claude.json') -Label 'Claude Code root configuration'
         $rootMergeReady = $false
@@ -787,10 +882,11 @@ function Invoke-ClaudeCodeDataMigration {
             throw $commitError
         }
         try {
-            $manifest = "Migration time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`r`nSource: $sourceConfig`r`nCurrent-account rollback: $rollbackDir`r`nImported project files: $importedProjectFiles`r`n"
+            $manifest = "Migration time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`r`nSource: $sourceConfig`r`nCurrent-account rollback: $rollbackDir`r`nImported project files: $importedProjectFiles`r`nSanitized settings files merged: $mergedSettings`r`n"
             [System.IO.File]::WriteAllText((Join-Path $rollbackDir 'MIGRATION_INFO.txt'), $manifest, [System.Text.UTF8Encoding]::new($false))
         } catch { Write-Warning "Migration succeeded, but the rollback note could not be written: $($_.Exception.Message)" }
         Write-Host "Migration complete. Imported project files: $importedProjectFiles"
+        if ($IncludeSettings) { Write-Host "Sanitized settings files merged: $mergedSettings" }
         Write-Host "Rollback snapshot: $rollbackDir"
     } finally {
         if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
@@ -846,6 +942,10 @@ if ([string]::IsNullOrWhiteSpace($Target)) {
     $Target = 'Migrate'
 } else {
     throw "Invalid -Target '$Target'. Use Desktop, Code, or Migrate."
+}
+
+if ($IncludeSettings -and $Target -ne 'Migrate') {
+    throw '-IncludeSettings applies only to -Target Migrate.'
 }
 
 if ($Target -eq 'Code' -and $IncludeBrowserIndexedDb) {
@@ -970,7 +1070,7 @@ if (-not (Stop-CleanupProcesses -ClaudeProcesses $claudeProcesses -Targets $targ
 
 if ($Target -eq 'Code' -and $codeConfigDir) {
     $cleanupBackup = Backup-ClaudeCodeUserData -CodeConfigDir $codeConfigDir
-    Write-Host 'Preserving Claude Code projects, conversations, settings, extensions, and .claude.json.'
+    Write-Host 'Backing up Claude Code projects, conversations, settings, extensions, and .claude.json.'
     if (-not (Remove-ClaudeCodeRootAccountMetadata)) {
         Write-Warning 'Claude Code credentials and cache will still be cleared, but .claude.json account metadata could not be removed.'
         $rootMetadataCleanupFailed = $true

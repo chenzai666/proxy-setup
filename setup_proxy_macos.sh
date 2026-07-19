@@ -9,6 +9,14 @@
 
 set -u
 
+# macOS ships awk at a stable system path. Do not inherit a broken or
+# architecture-mismatched awk from Conda or another PATH override.
+readonly SYSTEM_AWK="/usr/bin/awk"
+if [[ ! -x "$SYSTEM_AWK" ]]; then
+    printf 'Error: required system awk is unavailable: %s\n' "$SYSTEM_AWK" >&2
+    exit 1
+fi
+
 # ─── 配置区 ──────────────────────────────────────────────────
 DEFAULT_HTTP_PORT=7897
 DEFAULT_SOCKS5_PORT=7897
@@ -42,7 +50,7 @@ err()   { printf '  \033[0;31m✗ %s\033[0m\n' "$1" >&2; }
 bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
 
 get_merged_no_proxy() {
-    printf '%s' "${NO_PROXY:-},${no_proxy:-},$DEFAULT_NO_PROXY" | awk -F, '
+    printf '%s' "${NO_PROXY:-},${no_proxy:-},$DEFAULT_NO_PROXY" | "$SYSTEM_AWK" -F, '
         {
             for (i = 1; i <= NF; i++) {
                 value = $i
@@ -214,7 +222,7 @@ port_scan_candidates() {
             [[ "$p" -ge 1 && "$p" -le 65535 ]] || continue
             printf '%s\n' "$p"
         done
-    done | awk '!seen[$0]++'
+    done | "$SYSTEM_AWK" '!seen[$0]++'
 }
 
 find_listening_port_near() {
@@ -354,7 +362,7 @@ write_zshrc() {
         # 去除末尾多余空行，追加新块（避免多次运行积累空行）
         local tmp2
         tmp2=$(mktemp "${rc}.proxy-trim.XXXXXX") || { rm -f "$tmp"; err "创建临时文件失败"; return 1; }
-        if ! awk 'NF{f=NR} {a[NR]=$0} END{for(i=1;i<=f;i++) print a[i]}' "$tmp" > "$tmp2"; then
+        if ! "$SYSTEM_AWK" 'NF{f=NR} {a[NR]=$0} END{for(i=1;i<=f;i++) print a[i]}' "$tmp" > "$tmp2"; then
             rm -f "$tmp" "$tmp2"
             err "处理 $rc 失败"
             return 1
@@ -465,7 +473,7 @@ emit_profile() {
 
 profile_value() {
     local key="$1"
-    awk -F= -v k="$key" '$1 == k { print substr($0, length(k) + 2); exit }'
+    "$SYSTEM_AWK" -F= -v k="$key" '$1 == k { print substr($0, length(k) + 2); exit }'
 }
 
 fetch_exit_profile() {
@@ -632,7 +640,7 @@ state_get() {
     local key=$1 file encoded
     file=$(proxy_state_file)
     [[ -f "$file" ]] || return 0
-    encoded=$(awk -F= -v key="$key" '$1 == key { print substr($0, length(key) + 2); exit }' "$file")
+    encoded=$("$SYSTEM_AWK" -F= -v key="$key" '$1 == key { print substr($0, length(key) + 2); exit }' "$file")
     state_decode "$encoded"
 }
 
@@ -643,7 +651,7 @@ state_set() {
     mkdir -p "$dir" || return 1
     tmp=$(mktemp "$dir/.proxy-state.XXXXXX") || return 1
     if [[ -f "$file" ]]; then
-        awk -F= -v key="$key" '$1 != key' "$file" > "$tmp"
+        "$SYSTEM_AWK" -F= -v key="$key" '$1 != key' "$file" > "$tmp"
     fi
     printf '%s=%s\n' "$key" "$(state_encode "$value")" >> "$tmp"
     chmod 600 "$tmp"
@@ -656,7 +664,7 @@ state_unset() {
     [[ -f "$file" ]] || return 0
     dir=$(dirname "$file")
     tmp=$(mktemp "$dir/.proxy-state.XXXXXX") || return 1
-    awk -F= -v key="$key" '$1 != key' "$file" > "$tmp"
+    "$SYSTEM_AWK" -F= -v key="$key" '$1 != key' "$file" > "$tmp"
     chmod 600 "$tmp"
     mv "$tmp" "$file"
 }
@@ -988,7 +996,7 @@ full_connectivity_test() {
     o_code=$(echo "$o_out" | cut -d'|' -f2)
     o_time=$(echo "$o_out" | cut -d'|' -f3)
     local o_ms
-    o_ms=$(awk "BEGIN {printf \"%.0f\", $o_time * 1000}" 2>/dev/null || echo "0")
+    o_ms=$("$SYSTEM_AWK" "BEGIN {printf \"%.0f\", $o_time * 1000}" 2>/dev/null || echo "0")
 
     if [[ "$o_exit" == "0" && "$o_code" != "000" ]]; then
         local tag
@@ -1006,7 +1014,7 @@ full_connectivity_test() {
     a_code=$(echo "$a_out" | cut -d'|' -f2)
     a_time=$(echo "$a_out" | cut -d'|' -f3)
     local a_ms
-    a_ms=$(awk "BEGIN {printf \"%.0f\", $a_time * 1000}" 2>/dev/null || echo "0")
+    a_ms=$("$SYSTEM_AWK" "BEGIN {printf \"%.0f\", $a_time * 1000}" 2>/dev/null || echo "0")
 
     if [[ "$a_exit" == "0" && "$a_code" != "000" ]]; then
         local tag

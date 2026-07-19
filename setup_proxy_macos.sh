@@ -239,8 +239,15 @@ find_listening_port_near() {
 
 auto_detect() {
     # Prefer v2rayN when another client's configuration file is still present.
-    local vp sp
+    local vp sp found
     read -r vp sp <<< "$(detect_v2rayn_port)"
+    found=$(find_listening_port_near "$vp" "v2rayN" 2>/dev/null || true)
+    if [[ -n "$found" ]]; then
+        info "自动检测: v2rayN 端口 $found 正在监听"
+        echo "$found $(( found + sp - vp ))"
+        return
+    fi
+
     local cp csp
     read -r cp csp <<< "$(detect_clash_ports)"
     local sbhp="" sbsp=""

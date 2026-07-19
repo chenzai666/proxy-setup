@@ -238,10 +238,11 @@ find_listening_port_near() {
 }
 
 auto_detect() {
-    local cp csp
-    read -r cp csp <<< "$(detect_clash_ports)"
+    # Prefer v2rayN when another client's configuration file is still present.
     local vp sp
     read -r vp sp <<< "$(detect_v2rayn_port)"
+    local cp csp
+    read -r cp csp <<< "$(detect_clash_ports)"
     local sbhp="" sbsp=""
     read -r sbhp sbsp <<< "$(detect_singbox_ports || true)"
 

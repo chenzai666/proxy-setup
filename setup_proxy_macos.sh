@@ -165,12 +165,15 @@ detect_v2rayn_port() {
 detect_singbox_ports() {
     local configs=(
         "$HOME/.config/sing-box/config.json"
-        "$HOME/.config/sing-box/config.yaml"
     )
     if ! command -v perl >/dev/null 2>&1 || ! perl -MJSON::PP -e '1' >/dev/null 2>&1; then
         warn "macOS 缺少可用的 Perl JSON::PP，跳过 sing-box 自动检测"
         return 1
     fi
+    # Warn if a YAML config is present but cannot be parsed by JSON::PP
+    for _yaml in "$HOME/.config/sing-box/config.yaml" "$HOME/.config/sing-box/config.yml"; do
+        [[ -f "$_yaml" ]] && warn "sing-box YAML config detected ($( basename "$_yaml" )) — automatic port detection only supports JSON; set the proxy port manually or convert to config.json"
+    done
     for cfg in "${configs[@]}"; do
         [[ -f "$cfg" ]] || continue
         local http_port="" socks_port="" inbound_type inbound_port

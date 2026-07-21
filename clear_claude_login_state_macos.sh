@@ -184,14 +184,15 @@ backup_claude_code_user_data() {
     [ -e "$source" ] || [ -L "$source" ] || continue
     parent="$(dirname "$stage/.claude/$relative")"
     mkdir -p "$parent"
-    cp -pR "$source" "$stage/.claude/$relative"
+    cp -pR "$source" "$stage/.claude/$relative" || { rm -rf "$stage" 2>/dev/null || true; return 1; }
   done
   if [ -e "$home_dir/.claude.json" ] || [ -L "$home_dir/.claude.json" ]; then
     source="$(safe_user_profile_path "$home_dir/.claude.json")" || {
       say "Unsafe .claude.json was rejected; backup was not created."
+      rm -rf "$stage" 2>/dev/null || true
       return 1
     }
-    cp -pR "$source" "$stage/.claude.json"
+    cp -pR "$source" "$stage/.claude.json" || { rm -rf "$stage" 2>/dev/null || true; return 1; }
   fi
   date -u '+%Y-%m-%dT%H:%M:%SZ' > "$stage/BACKUP_COMPLETE"
   mv "$stage" "$destination"
@@ -289,11 +290,13 @@ stop_claude_code_processes() {
   fi
   pkill -x claude >/dev/null 2>&1 || true
   pkill -f '@anthropic-ai/claude-code' >/dev/null 2>&1 || true
-  if pgrep -x claude >/dev/null 2>&1 || pgrep -f '@anthropic-ai/claude-code' >/dev/null 2>&1; then
-    say "Warning: Claude Code is still running."
-    return 1
-  fi
-  return 0
+  local attempt
+  for attempt in 1 2 3; do
+    sleep 1
+    pgrep -x claude >/dev/null 2>&1 || pgrep -f '@anthropic-ai/claude-code' >/dev/null 2>&1 || return 0
+  done
+  say "Warning: Claude Code is still running."
+  return 1
 }
 
 clear_claude_code_keychain_service() {
